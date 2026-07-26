@@ -14,6 +14,9 @@ Build order from the spec:
 Verification (step 3) and resend/re-upload-reset flows (step 5) are not built
 yet.
 
+See [DEPLOYMENT.md](DEPLOYMENT.md) for getting this running on Azure App
+Service.
+
 ## Prerequisites
 
 - Node.js 20+ and npm
