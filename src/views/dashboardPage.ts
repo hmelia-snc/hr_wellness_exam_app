@@ -48,6 +48,8 @@ const EXTRA_STYLES = `
     cursor: pointer;
   }
   .small-button:hover { background: ${BRAND.red}; color: #fff; }
+  .actions-cell { display: flex; gap: 0.4rem; }
+  .actions-cell form { display: inline; }
   @media (prefers-color-scheme: dark) {
     th, td { border-bottom-color: #3a3836; }
     .status-sent { background: #333230; color: #ccc; }
@@ -74,9 +76,12 @@ export function renderDashboardPage(props: DashboardPageProps): string {
       <td>${formatDate(r.sentAt)}</td>
       <td>${formatDate(r.receivedAt)}</td>
       <td>${formatDate(r.completedAt)}</td>
-      <td>
+      <td class="actions-cell">
         <form method="post" action="/dashboard/records/${encodeURIComponent(r.id)}/resend?${resendQuery.toString()}">
           <button type="submit" class="small-button">Resend</button>
+        </form>
+        <form method="post" action="/dashboard/records/${encodeURIComponent(r.id)}/link?${resendQuery.toString()}">
+          <button type="submit" class="small-button">Get Link</button>
         </form>
       </td>
     </tr>`

@@ -84,6 +84,56 @@ export async function upsertEmployeeAndSendLink(
   }
 }
 
+interface EmployeeRecord {
+  id: string;
+  fullName: string;
+  email: string;
+}
+interface ResetRecordResult {
+  rawToken: string;
+  cycleYear: number;
+  employee: EmployeeRecord;
+}
+
+/**
+ * Shared by resendLink and generateShareableLink: regenerates a fresh token
+ * for an existing PhysicalRecord (invalidating the old one) and resets it to
+ * a clean `sent` state — nothing uploaded yet, no email sent yet either
+ * (callers decide separately whether to email it).
+ */
+async function resetRecordWithFreshToken(prisma: PrismaClient, physicalRecordId: string): Promise<ResetRecordResult> {
+  const env = getEnv();
+  const record = await prisma.physicalRecord.findUnique({ where: { id: physicalRecordId } });
+  if (!record) {
+    throw new Error(`No physical record found with id ${physicalRecordId}`);
+  }
+  const employee = await prisma.employee.findUnique({ where: { id: record.employeeId } });
+  if (!employee) {
+    throw new Error(`No employee found with id ${record.employeeId}`);
+  }
+
+  const { rawToken, tokenHash } = generateToken();
+  await prisma.physicalRecord.update({
+    where: { id: physicalRecordId },
+    data: {
+      tokenHash,
+      tokenExpiresAt: tokenExpiryDate(new Date(), env.TOKEN_EXPIRY_DAYS),
+      status: "sent",
+      sentAt: null,
+      receivedAt: null,
+      completedAt: null,
+      uploadedFileUrl: null,
+      uploadedBlobPath: null,
+      uploadedContentType: null,
+      verificationResult: null,
+      reviewedBy: null,
+      reviewedAt: null,
+    },
+  });
+
+  return { rawToken, cycleYear: record.cycleYear, employee };
+}
+
 export interface ResendLinkResult {
   emailSent: boolean;
   emailError?: string;
@@ -101,45 +151,41 @@ export async function resendLink(
   physicalRecordId: string
 ): Promise<ResendLinkResult> {
   const env = getEnv();
-
-  const record = await prisma.physicalRecord.findUnique({ where: { id: physicalRecordId } });
-  if (!record) {
-    throw new Error(`No physical record found with id ${physicalRecordId}`);
-  }
-  const employee = await prisma.employee.findUnique({ where: { id: record.employeeId } });
-  if (!employee) {
-    throw new Error(`No employee found with id ${record.employeeId}`);
-  }
-
-  const { rawToken, tokenHash } = generateToken();
-  await prisma.physicalRecord.update({
-    where: { id: physicalRecordId },
-    data: {
-      tokenHash,
-      tokenExpiresAt: tokenExpiryDate(new Date(), env.TOKEN_EXPIRY_DAYS),
-      status: "sent",
-      receivedAt: null,
-      completedAt: null,
-      uploadedFileUrl: null,
-      uploadedBlobPath: null,
-      uploadedContentType: null,
-      verificationResult: null,
-      reviewedBy: null,
-      reviewedAt: null,
-    },
-  });
+  const { rawToken, cycleYear, employee } = await resetRecordWithFreshToken(prisma, physicalRecordId);
 
   const link = `${env.APP_BASE_URL}/physical/${rawToken}`;
   try {
-    await emailSender.send({
-      toEmail: employee.email,
-      toName: employee.fullName,
-      link,
-      cycleYear: record.cycleYear,
-    });
+    await emailSender.send({ toEmail: employee.email, toName: employee.fullName, link, cycleYear });
     await prisma.physicalRecord.update({ where: { id: physicalRecordId }, data: { sentAt: new Date() } });
     return { emailSent: true };
   } catch (err) {
     return { emailSent: false, emailError: err instanceof Error ? err.message : String(err) };
   }
+}
+
+export interface ShareableLinkResult {
+  link: string;
+  employeeName: string;
+  employeeEmail: string;
+  cycleYear: number;
+}
+
+/**
+ * Same reset as resendLink, but doesn't email anything — for HR to grab the
+ * link directly from the dashboard (Slack, Teams, in person, etc.) instead
+ * of waiting on email delivery. Still invalidates the previous token, same
+ * as resendLink, since it's the same underlying reset.
+ */
+export async function generateShareableLink(
+  prisma: PrismaClient,
+  physicalRecordId: string
+): Promise<ShareableLinkResult> {
+  const env = getEnv();
+  const { rawToken, cycleYear, employee } = await resetRecordWithFreshToken(prisma, physicalRecordId);
+  return {
+    link: `${env.APP_BASE_URL}/physical/${rawToken}`,
+    employeeName: employee.fullName,
+    employeeEmail: employee.email,
+    cycleYear,
+  };
 }

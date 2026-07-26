@@ -2,8 +2,19 @@ import { Router, type Request, type Response, type NextFunction } from "express"
 import type { PrismaClient } from "@prisma/client";
 import { requireHrAuth } from "../lib/auth.js";
 import { renderDashboardPage } from "../views/dashboardPage.js";
+import { renderShareableLinkPage } from "../views/shareableLinkPage.js";
 import type { EmailSender } from "../lib/email/types.js";
-import { resendLink } from "../services/employeeActions.js";
+import { resendLink, generateShareableLink } from "../services/employeeActions.js";
+
+function backToDashboardHref(req: Request): string {
+  const year = typeof req.query.year === "string" ? req.query.year : undefined;
+  const status = typeof req.query.status === "string" ? req.query.status : undefined;
+  const params = new URLSearchParams();
+  if (year) params.set("year", year);
+  if (status) params.set("status", status);
+  const qs = params.toString();
+  return `/dashboard${qs ? `?${qs}` : ""}`;
+}
 
 export function createDashboardRouter(prisma: PrismaClient, emailSender: EmailSender): Router {
   const router = Router();
@@ -39,13 +50,24 @@ export function createDashboardRouter(prisma: PrismaClient, emailSender: EmailSe
   router.post("/records/:id/resend", requireHrAuth, async (req: Request, res: Response, next: NextFunction) => {
     try {
       await resendLink(prisma, emailSender, req.params.id);
-      const year = typeof req.query.year === "string" ? req.query.year : undefined;
-      const status = typeof req.query.status === "string" ? req.query.status : undefined;
-      const params = new URLSearchParams();
-      if (year) params.set("year", year);
-      if (status) params.set("status", status);
-      const qs = params.toString();
-      res.redirect(303, `/dashboard${qs ? `?${qs}` : ""}`);
+      res.redirect(303, backToDashboardHref(req));
+    } catch (err) {
+      next(err);
+    }
+  });
+
+  router.post("/records/:id/link", requireHrAuth, async (req: Request, res: Response, next: NextFunction) => {
+    try {
+      const result = await generateShareableLink(prisma, req.params.id);
+      res.send(
+        renderShareableLinkPage({
+          link: result.link,
+          employeeName: result.employeeName,
+          employeeEmail: result.employeeEmail,
+          cycleYear: result.cycleYear,
+          backHref: backToDashboardHref(req),
+        })
+      );
     } catch (err) {
       next(err);
     }

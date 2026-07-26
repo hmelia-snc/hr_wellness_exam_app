@@ -105,3 +105,42 @@ describe("POST /dashboard/records/:id/resend", () => {
     expect(emailSender.sent[0].toEmail).toBe("jane.doe@example.com");
   });
 });
+
+describe("POST /dashboard/records/:id/link", () => {
+  it("generates a fresh token, resets to sent, shows the link, and sends no email", async () => {
+    const prisma = createFakePrisma();
+    const emailSender = createFakeEmailSender();
+    const { record } = await seedEmployeeAndRecord(prisma, {
+      status: "needs_review",
+      receivedAt: new Date(),
+      uploadedFileUrl: "https://fake-blob.test/old-file.pdf",
+    });
+    const app = createApp(prisma as any, createFakeBlobStorage(), emailSender);
+    const agent = request.agent(app);
+    await agent.post("/auth/login").type("form").send({ returnTo: "/dashboard" });
+
+    const res = await agent.post(`/dashboard/records/${record.id}/link?year=2026&status=needs_review`);
+    expect(res.status).toBe(200);
+    expect(res.text).toContain("Jane Doe");
+    expect(res.text).toMatch(/\/physical\/[\w-]+/);
+    expect(res.text).toContain('href="/dashboard?year=2026&status=needs_review"');
+
+    const updated = prisma._state.physicalRecords.find((r: any) => r.id === record.id);
+    expect(updated.status).toBe("sent");
+    expect(updated.tokenHash).not.toBe("unused-hash");
+    expect(updated.sentAt).toBeNull();
+    expect(updated.receivedAt).toBeNull();
+    expect(updated.uploadedFileUrl).toBeNull();
+    expect(emailSender.sent).toHaveLength(0);
+  });
+
+  it("requires auth", async () => {
+    const prisma = createFakePrisma();
+    const { record } = await seedEmployeeAndRecord(prisma);
+    const app = createApp(prisma as any, createFakeBlobStorage(), createFakeEmailSender());
+
+    const res = await request(app).post(`/dashboard/records/${record.id}/link`);
+    expect(res.status).toBe(302);
+    expect(res.headers.location).toMatch(/^\/auth\/login/);
+  });
+});

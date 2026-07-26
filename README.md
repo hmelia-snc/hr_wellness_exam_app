@@ -99,6 +99,12 @@ cycle with sent/received/completed timestamps, filterable by status, plus a
 the old link), clears any uploaded-file/received/completed state, resets
 status to `sent`, and re-sends the email. Works from any status.
 
+**Get Link** button per row — same reset as Resend, but shows the new link
+directly in the dashboard instead of emailing it (for pasting into Slack,
+Teams, or handing to someone in person). No raw token is ever stored in the
+database (see "Token storage" below), so this has to generate a fresh one on
+demand — meaning, like Resend, it invalidates whatever link was sent before.
+
 **Manage Employees** (`/dashboard/employees`, linked from the main
 dashboard) — add a single employee (name/email/optional external
 ID/cycle year, immediately creates a record and sends the link) or upload a
@@ -115,7 +121,7 @@ directly from the dashboard, CSV export.
 npm test
 ```
 
-37 tests across token generation/hashing, CSV parsing, the import service's
+47 tests across token generation/hashing, CSV parsing, the import service's
 orchestration + idempotency, token validation, the `/physical/*` routes, and
 the `/dashboard` + `/auth` routes (via `supertest` against the Express app
 with a fake Prisma client and a fake blob storage backend) — none require a
@@ -141,7 +147,7 @@ just fakes/mocks:
 - The full dashboard auth flow: unauthenticated redirect → dev sign-in →
   authenticated status table with real seeded data → status filter working
 - `npm install` / `npm audit`: 0 vulnerabilities; `tsc --noEmit` / `npm run
-  build` clean; all 37 tests pass
+  build` clean; all 47 tests pass
 
 Still not verified (no Entra app registration / real Azure Storage account
 available yet):
