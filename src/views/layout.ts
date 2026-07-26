@@ -98,6 +98,7 @@ const BASE_STYLES = `
     body { color: #ededed; background: #171514; }
     input[type="text"], input[type="email"] { background: #232120; color: #ededed; border-color: #45423f; }
     .notice { background: ${BRAND.redTint10Dark}; color: #f5b9b4; border-color: ${BRAND.redTintBorderDark}; }
+    h1 { color: #f5f5f5; }
     h2 { color: #e08b85; }
     .brand-footer { border-top-color: #3a3836; color: #9a9896; }
   }

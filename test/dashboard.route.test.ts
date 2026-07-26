@@ -104,6 +104,41 @@ describe("POST /dashboard/records/:id/resend", () => {
     expect(emailSender.sent).toHaveLength(1);
     expect(emailSender.sent[0].toEmail).toBe("jane.doe@example.com");
   });
+
+  it("resets the record but redirects with resendFailed=1 when the email send throws", async () => {
+    const prisma = createFakePrisma();
+    const emailSender = createFakeEmailSender({ failFor: new Set(["jane.doe@example.com"]) });
+    const { record } = await seedEmployeeAndRecord(prisma);
+    const app = createApp(prisma as any, createFakeBlobStorage(), emailSender);
+    const agent = request.agent(app);
+    await agent.post("/auth/login").type("form").send({ returnTo: "/dashboard" });
+
+    const res = await agent.post(`/dashboard/records/${record.id}/resend?year=2026`);
+    expect(res.status).toBe(303);
+    expect(res.headers.location).toBe("/dashboard?year=2026&resendFailed=1");
+
+    const updated = prisma._state.physicalRecords.find((r: any) => r.id === record.id);
+    expect(updated.status).toBe("sent");
+    expect(updated.sentAt).toBeNull();
+
+    const page = await agent.get("/dashboard?year=2026&resendFailed=1");
+    expect(page.text).toMatch(/email failed to send/i);
+  });
+
+  it("hides Resend/Get Link and shows an inactive note for a deactivated employee", async () => {
+    const prisma = createFakePrisma();
+    await seedEmployeeAndRecord(prisma);
+    prisma._state.employeesByEmail.get("jane.doe@example.com").active = false;
+    const app = createApp(prisma as any, createFakeBlobStorage(), createFakeEmailSender());
+    const agent = request.agent(app);
+    await agent.post("/auth/login").type("form").send({ returnTo: "/dashboard" });
+
+    const res = await agent.get("/dashboard?year=2026");
+    expect(res.status).toBe(200);
+    expect(res.text).toContain("Employee inactive");
+    expect(res.text).not.toContain("/resend?");
+    expect(res.text).not.toContain("Get Link");
+  });
 });
 
 describe("POST /dashboard/records/:id/link", () => {

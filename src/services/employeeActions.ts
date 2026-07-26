@@ -75,12 +75,9 @@ export async function upsertEmployeeAndSendLink(
     await prisma.physicalRecord.update({ where: { id: record.id }, data: { sentAt: new Date() } });
     return { employeeId: employee.id, recordCreated: true, emailSent: true };
   } catch (err) {
-    return {
-      employeeId: employee.id,
-      recordCreated: true,
-      emailSent: false,
-      emailError: err instanceof Error ? err.message : String(err),
-    };
+    const emailError = err instanceof Error ? err.message : String(err);
+    console.error(`[upsertEmployeeAndSendLink] email send failed for ${employee.email}:`, emailError);
+    return { employeeId: employee.id, recordCreated: true, emailSent: false, emailError };
   }
 }
 
@@ -159,7 +156,9 @@ export async function resendLink(
     await prisma.physicalRecord.update({ where: { id: physicalRecordId }, data: { sentAt: new Date() } });
     return { emailSent: true };
   } catch (err) {
-    return { emailSent: false, emailError: err instanceof Error ? err.message : String(err) };
+    const emailError = err instanceof Error ? err.message : String(err);
+    console.error(`[resendLink] email send failed for record ${physicalRecordId} (${employee.email}):`, emailError);
+    return { emailSent: false, emailError };
   }
 }
 

@@ -6,6 +6,7 @@ export interface DashboardRecordRow {
   id: string;
   employeeName: string;
   employeeEmail: string;
+  employeeActive: boolean;
   status: string;
   sentAt: Date | null;
   receivedAt: Date | null;
@@ -16,6 +17,7 @@ export interface DashboardPageProps {
   hrUser: HrUser;
   cycleYear: number;
   statusFilter?: string;
+  resendFailed?: boolean;
   records: DashboardRecordRow[];
 }
 
@@ -50,10 +52,14 @@ const EXTRA_STYLES = `
   .small-button:hover { background: ${BRAND.red}; color: #fff; }
   .actions-cell { display: flex; gap: 0.4rem; }
   .actions-cell form { display: inline; }
+  .inactive-note { color: #888; font-size: 0.8rem; font-style: italic; }
+  .notice-error { background: ${BRAND.redTint10}; color: ${BRAND.darkRed}; border: 1px solid ${BRAND.redTintBorder}; border-radius: 6px; padding: 0.6rem 1rem; margin-bottom: 1rem; }
   @media (prefers-color-scheme: dark) {
     th, td { border-bottom-color: #3a3836; }
     .status-sent { background: #333230; color: #ccc; }
     .session-line { color: #aaa; }
+    .inactive-note { color: #999; }
+    .notice-error { background: ${BRAND.redTint10Dark}; color: #f5b9b4; border-color: ${BRAND.redTintBorderDark}; }
   }
 `;
 
@@ -77,12 +83,16 @@ export function renderDashboardPage(props: DashboardPageProps): string {
       <td>${formatDate(r.receivedAt)}</td>
       <td>${formatDate(r.completedAt)}</td>
       <td class="actions-cell">
-        <form method="post" action="/dashboard/records/${encodeURIComponent(r.id)}/resend?${resendQuery.toString()}">
+        ${
+          r.employeeActive
+            ? `<form method="post" action="/dashboard/records/${encodeURIComponent(r.id)}/resend?${resendQuery.toString()}">
           <button type="submit" class="small-button">Resend</button>
         </form>
         <form method="post" action="/dashboard/records/${encodeURIComponent(r.id)}/link?${resendQuery.toString()}">
           <button type="submit" class="small-button">Get Link</button>
-        </form>
+        </form>`
+            : `<span class="inactive-note">Employee inactive</span>`
+        }
       </td>
     </tr>`
     )
@@ -94,12 +104,17 @@ export function renderDashboardPage(props: DashboardPageProps): string {
     return `<a href="${href}"${isActive ? ' class="active"' : ""}>${label}</a>`;
   };
 
+  const resendFailedNotice = props.resendFailed
+    ? `<div class="notice-error">The link was regenerated, but the email failed to send — check the server logs for details, or use "Get Link" to grab it manually.</div>`
+    : "";
+
   const body = `
 <h1>HR Dashboard — ${props.cycleYear} Cycle</h1>
 <p class="session-line">Signed in as ${escapeHtml(props.hrUser.name)} (${escapeHtml(
     props.hrUser.email
   )}) &middot; <a href="/auth/logout">Sign out</a></p>
 <p class="nav-line"><a href="/dashboard/employees">Manage Employees →</a></p>
+${resendFailedNotice}
 <div class="filters">
   ${filterLink("All")}
   ${STATUSES.map((s) => filterLink(s, s)).join("")}

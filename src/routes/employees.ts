@@ -24,7 +24,10 @@ export function createEmployeesRouter(prisma: PrismaClient, emailSender: EmailSe
 
   router.get("/", requireHrAuth, async (req: Request, res: Response) => {
     const employees = await prisma.employee.findMany({ orderBy: { fullName: "asc" } });
-    const addResult = req.query.added === "1" ? "added" : req.query.added === "0" ? "exists" : undefined;
+    const addResult =
+      req.query.added === "added" || req.query.added === "exists" || req.query.added === "added_email_failed"
+        ? req.query.added
+        : undefined;
     res.send(
       renderEmployeesPage({
         hrUser: req.session.hrUser!,
@@ -48,7 +51,8 @@ export function createEmployeesRouter(prisma: PrismaClient, emailSender: EmailSe
         employeeIdExternal: employeeIdExternal || undefined,
         cycleYear: Number(cycleYear),
       });
-      res.redirect(303, `/dashboard/employees?added=${result.recordCreated ? "1" : "0"}`);
+      const added = !result.recordCreated ? "exists" : result.emailSent ? "added" : "added_email_failed";
+      res.redirect(303, `/dashboard/employees?added=${added}`);
     } catch (err) {
       next(err);
     }

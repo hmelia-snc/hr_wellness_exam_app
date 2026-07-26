@@ -11,7 +11,7 @@ export interface EmployeeRow {
   active: boolean;
 }
 
-export type AddResult = "added" | "exists";
+export type AddResult = "added" | "exists" | "added_email_failed";
 
 export interface EmployeesPageProps {
   hrUser: HrUser;
@@ -56,6 +56,7 @@ const EXTRA_STYLES = `
   }
   .small-button:hover { background: ${BRAND.red}; color: #fff; }
   .notice-success { background: #d9f2d9; color: #1e6b1e; border: 1px solid #a9d9a9; border-radius: 6px; padding: 0.6rem 1rem; }
+  .notice-error { background: ${BRAND.redTint10}; color: ${BRAND.darkRed}; border: 1px solid ${BRAND.redTintBorder}; border-radius: 6px; padding: 0.6rem 1rem; }
   .row-errors { color: ${BRAND.darkRed}; }
   @media (prefers-color-scheme: dark) {
     th, td { border-bottom-color: #3a3836; }
@@ -63,6 +64,7 @@ const EXTRA_STYLES = `
     .session-line { color: #aaa; }
     .card { border-color: #3a3836; }
     .inline-fields input { background: #232120; color: #ededed; border-color: #45423f; }
+    .notice-error { background: ${BRAND.redTint10Dark}; color: #f5b9b4; border-color: ${BRAND.redTintBorderDark}; }
   }
 `;
 
@@ -93,7 +95,9 @@ export function renderEmployeesPage(props: EmployeesPageProps): string {
       ? `<div class="notice-success">Employee added and emailed.</div>`
       : props.addResult === "exists"
         ? `<div class="notice-success">That employee already had a record for this cycle — nothing new was sent.</div>`
-        : "";
+        : props.addResult === "added_email_failed"
+          ? `<div class="notice-error">Employee added, but the email failed to send — check the server logs for details, or use "Get Link" on the status dashboard to grab a link to share manually.</div>`
+          : "";
 
   const importNotice = props.importResult ? importResultSummary(props.importResult) : "";
 

@@ -39,7 +39,7 @@ describe("GET /dashboard/employees", () => {
 });
 
 describe("POST /dashboard/employees (add one)", () => {
-  it("creates the employee, sends the email, and redirects with added=1", async () => {
+  it("creates the employee, sends the email, and redirects with added=added", async () => {
     const prisma = createFakePrisma();
     const emailSender = createFakeEmailSender();
     const app = createApp(prisma as any, createFakeBlobStorage(), emailSender);
@@ -51,13 +51,13 @@ describe("POST /dashboard/employees (add one)", () => {
       .send({ fullName: "New Person", email: "new.person@example.com", cycleYear: "2026" });
 
     expect(res.status).toBe(303);
-    expect(res.headers.location).toBe("/dashboard/employees?added=1");
+    expect(res.headers.location).toBe("/dashboard/employees?added=added");
     expect(emailSender.sent).toHaveLength(1);
     expect(emailSender.sent[0].toEmail).toBe("new.person@example.com");
     expect(prisma._state.physicalRecords).toHaveLength(1);
   });
 
-  it("redirects with added=0 and sends no email when a record already exists for that cycle", async () => {
+  it("redirects with added=exists and sends no email when a record already exists for that cycle", async () => {
     const prisma = createFakePrisma();
     const emailSender = createFakeEmailSender();
     const app = createApp(prisma as any, createFakeBlobStorage(), emailSender);
@@ -74,9 +74,28 @@ describe("POST /dashboard/employees (add one)", () => {
       .send({ fullName: "New Person", email: "new.person@example.com", cycleYear: "2026" });
 
     expect(res.status).toBe(303);
-    expect(res.headers.location).toBe("/dashboard/employees?added=0");
+    expect(res.headers.location).toBe("/dashboard/employees?added=exists");
     expect(emailSender.sent).toHaveLength(1);
     expect(prisma._state.physicalRecords).toHaveLength(1);
+  });
+
+  it("redirects with added=added_email_failed and surfaces the failure when the email send throws", async () => {
+    const prisma = createFakePrisma();
+    const emailSender = createFakeEmailSender({ failFor: new Set(["fails@example.com"]) });
+    const app = createApp(prisma as any, createFakeBlobStorage(), emailSender);
+    const agent = await signedInAgent(app);
+
+    const res = await agent
+      .post("/dashboard/employees")
+      .type("form")
+      .send({ fullName: "Fails Person", email: "fails@example.com", cycleYear: "2026" });
+
+    expect(res.status).toBe(303);
+    expect(res.headers.location).toBe("/dashboard/employees?added=added_email_failed");
+    expect(prisma._state.physicalRecords).toHaveLength(1);
+
+    const page = await agent.get("/dashboard/employees?added=added_email_failed");
+    expect(page.text).toMatch(/email failed to send/i);
   });
 });
 

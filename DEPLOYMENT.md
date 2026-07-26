@@ -146,9 +146,34 @@ HR Dashboard link).
   why the deploy's own restart didn't take effect that time — if a route you
   just deployed 404s, try a manual restart before assuming the code is
   wrong.
+- **`az ad app permission admin-consent` can report success without actually
+  creating the app role assignment.** Happened on the mail-send app
+  registration: the command returned cleanly, but
+  `GET /servicePrincipals/{id}/appRoleAssignments` came back empty, and
+  Graph sendMail failed with `ErrorAccessDenied`. Fixed by creating the
+  assignment directly:
+  ```bash
+  GRAPH_SP_ID=$(az ad sp show --id 00000003-0000-0000-c000-000000000000 --query id -o tsv)
+  az rest --method post \
+    --url "https://graph.microsoft.com/v1.0/servicePrincipals/<CLIENT_SP_ID>/appRoleAssignedTo" \
+    --headers "Content-Type=application/json" \
+    --body "{\"principalId\":\"<CLIENT_SP_ID>\",\"resourceId\":\"$GRAPH_SP_ID\",\"appRoleId\":\"<APP_ROLE_ID>\"}"
+  ```
+  After creating an app registration's Mail.Send permission, verify the
+  assignment actually exists (`GET
+  /servicePrincipals/{clientSpId}/appRoleAssignments` should be non-empty)
+  rather than trusting `admin-consent`'s exit code alone.
+- **`Always On` is off by default, even on B1+ tiers that support it.**
+  Without it, the app idles after ~20 min of no traffic; the next request
+  cold-starts the container (slow, since `npm start` runs `prisma migrate
+  deploy` before the server even boots) and can look like the site is down.
+  The provisioning script now sets `--always-on true`; if you provisioned
+  before this was added, run `az webapp config set --name <APP_NAME>
+  --resource-group <RESOURCE_GROUP> --always-on true` once.
 
 This has been deployed and verified against real Azure: App Service is live
 at `hr-physical-tracker.azurewebsites.net`, both Entra app registrations
 (mail-send and dashboard SSO) exist and work, `prisma migrate deploy` has
 applied real migrations against production Azure SQL, and the dashboard/auth
-flow has been exercised end-to-end there.
+flow has been exercised end-to-end there — including a real Graph email
+delivered to a real inbox.

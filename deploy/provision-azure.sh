@@ -57,6 +57,15 @@ az webapp create \
   --runtime "NODE:22-lts" \
   --output none
 
+# Without this, App Service idles the app after ~20 min of no traffic; the
+# next request cold-starts it (slow, since `npm start` runs `prisma migrate
+# deploy` before the server even boots) and can look like the site is down.
+az webapp config set \
+  --name "$APP_NAME" \
+  --resource-group "$RESOURCE_GROUP" \
+  --always-on true \
+  --output none
+
 # New App Services disable Basic Auth (SCM/FTP) publishing credentials by
 # default; azure/webapps-deploy's publish-profile auth needs SCM enabled.
 # FTP stays disabled since nothing here uses it. A future hardening step is

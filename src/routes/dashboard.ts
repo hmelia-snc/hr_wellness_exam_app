@@ -6,12 +6,13 @@ import { renderShareableLinkPage } from "../views/shareableLinkPage.js";
 import type { EmailSender } from "../lib/email/types.js";
 import { resendLink, generateShareableLink } from "../services/employeeActions.js";
 
-function backToDashboardHref(req: Request): string {
+function backToDashboardHref(req: Request, extra: Record<string, string> = {}): string {
   const year = typeof req.query.year === "string" ? req.query.year : undefined;
   const status = typeof req.query.status === "string" ? req.query.status : undefined;
   const params = new URLSearchParams();
   if (year) params.set("year", year);
   if (status) params.set("status", status);
+  for (const [key, value] of Object.entries(extra)) params.set(key, value);
   const qs = params.toString();
   return `/dashboard${qs ? `?${qs}` : ""}`;
 }
@@ -34,10 +35,12 @@ export function createDashboardRouter(prisma: PrismaClient, emailSender: EmailSe
         hrUser: req.session.hrUser!,
         cycleYear,
         statusFilter,
+        resendFailed: req.query.resendFailed === "1",
         records: records.map((record) => ({
           id: record.id,
           employeeName: record.employee.fullName,
           employeeEmail: record.employee.email,
+          employeeActive: record.employee.active,
           status: record.status,
           sentAt: record.sentAt,
           receivedAt: record.receivedAt,
@@ -49,8 +52,8 @@ export function createDashboardRouter(prisma: PrismaClient, emailSender: EmailSe
 
   router.post("/records/:id/resend", requireHrAuth, async (req: Request, res: Response, next: NextFunction) => {
     try {
-      await resendLink(prisma, emailSender, req.params.id);
-      res.redirect(303, backToDashboardHref(req));
+      const result = await resendLink(prisma, emailSender, req.params.id);
+      res.redirect(303, backToDashboardHref(req, result.emailSent ? {} : { resendFailed: "1" }));
     } catch (err) {
       next(err);
     }
