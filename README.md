@@ -1,5 +1,9 @@
 # HR Annual Physical Form Tracker
 
+**Status: v1.0.0-beta.1** — functional end-to-end on a local/dev stack and
+verified live there; not yet deployed to or exercised against real Azure
+infrastructure or real Entra credentials.
+
 Build order from the spec:
 - **Step 1:** data model, CSV import, token generation, email send (status → `sent`)
 - **Step 2:** the employee-facing `/physical/{token}` page — pick a language,
