@@ -3,6 +3,7 @@ import { escapeHtml } from "../lib/html.js";
 import type { HrUser } from "../lib/auth.js";
 
 export interface DashboardRecordRow {
+  id: string;
   employeeName: string;
   employeeEmail: string;
   status: string;
@@ -34,6 +35,19 @@ const EXTRA_STYLES = `
   .filters a.active { text-decoration: underline; }
   .session-line { color: #666; font-size: 0.9rem; }
   .session-line a { color: ${BRAND.red}; }
+  .nav-line { margin: 0.5rem 0 1rem; }
+  .nav-line a { color: ${BRAND.red}; font-weight: 500; text-decoration: none; }
+  .small-button {
+    font-family: 'Ubuntu', Arial, sans-serif;
+    font-size: 0.8rem;
+    padding: 0.25rem 0.6rem;
+    border-radius: 6px;
+    border: 1px solid ${BRAND.red};
+    background: transparent;
+    color: ${BRAND.red};
+    cursor: pointer;
+  }
+  .small-button:hover { background: ${BRAND.red}; color: #fff; }
   @media (prefers-color-scheme: dark) {
     th, td { border-bottom-color: #3a3836; }
     .status-sent { background: #333230; color: #ccc; }
@@ -46,6 +60,10 @@ function formatDate(date: Date | null): string {
 }
 
 export function renderDashboardPage(props: DashboardPageProps): string {
+  const resendQuery = new URLSearchParams();
+  resendQuery.set("year", String(props.cycleYear));
+  if (props.statusFilter) resendQuery.set("status", props.statusFilter);
+
   const rows = props.records
     .map(
       (r) => `
@@ -56,6 +74,11 @@ export function renderDashboardPage(props: DashboardPageProps): string {
       <td>${formatDate(r.sentAt)}</td>
       <td>${formatDate(r.receivedAt)}</td>
       <td>${formatDate(r.completedAt)}</td>
+      <td>
+        <form method="post" action="/dashboard/records/${encodeURIComponent(r.id)}/resend?${resendQuery.toString()}">
+          <button type="submit" class="small-button">Resend</button>
+        </form>
+      </td>
     </tr>`
     )
     .join("");
@@ -71,15 +94,16 @@ export function renderDashboardPage(props: DashboardPageProps): string {
 <p class="session-line">Signed in as ${escapeHtml(props.hrUser.name)} (${escapeHtml(
     props.hrUser.email
   )}) &middot; <a href="/auth/logout">Sign out</a></p>
+<p class="nav-line"><a href="/dashboard/employees">Manage Employees →</a></p>
 <div class="filters">
   ${filterLink("All")}
   ${STATUSES.map((s) => filterLink(s, s)).join("")}
 </div>
 <table>
   <thead>
-    <tr><th>Employee</th><th>Email</th><th>Status</th><th>Sent</th><th>Received</th><th>Completed</th></tr>
+    <tr><th>Employee</th><th>Email</th><th>Status</th><th>Sent</th><th>Received</th><th>Completed</th><th></th></tr>
   </thead>
-  <tbody>${rows || `<tr><td colspan="6">No records for this cycle${props.statusFilter ? ` with status "${escapeHtml(props.statusFilter)}"` : ""}.</td></tr>`}</tbody>
+  <tbody>${rows || `<tr><td colspan="7">No records for this cycle${props.statusFilter ? ` with status "${escapeHtml(props.statusFilter)}"` : ""}.</td></tr>`}</tbody>
 </table>
 `;
 

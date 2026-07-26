@@ -1,22 +1,24 @@
 # HR Annual Physical Form Tracker
 
-**Status: v1.0.0-beta.1** — functional end-to-end on a local/dev stack and
-verified live there; not yet deployed to or exercised against real Azure
-infrastructure or real Entra credentials.
+**Status: v1.0.0-beta.1** — deployed and running on Azure App Service
+(`hr-physical-tracker`), with real Entra ID app registrations wired up for
+both mail-send and dashboard SSO. Still a beta: verification (step 3) isn't
+built, and the deployment path (Azure resource provisioning, App Service
+config quirks) has only been exercised once.
 
 Build order from the spec:
 - **Step 1:** data model, CSV import, token generation, email send (status → `sent`)
 - **Step 2:** the employee-facing `/physical/{token}` page — pick a language,
-  download the blank form, enter your name/email and upload the completed
-  one, status → `received`. Once uploaded, the document previews inline next
-  to the form.
-- **Step 4 (partial):** a secured `/dashboard` — status table only so far, no
-  per-record file view or resolve/resend actions yet. Auth defaults to a
-  local dev bypass (`AUTH_MODE=mock`); swap to `AUTH_MODE=entra` once a real
-  Entra ID app registration exists.
+  download the blank form, upload the completed one (no name/email re-entry
+  needed — the unique token is the identity), status → `received`. Once
+  uploaded, the document previews inline next to the form.
+- **Step 4 (partial):** a secured `/dashboard` — status table with a Resend
+  action per record, plus `/dashboard/employees` for adding/deactivating
+  employees and CSV bulk import. Auth defaults to a local dev bypass
+  (`AUTH_MODE=mock`); production runs `AUTH_MODE=entra`.
 
-Verification (step 3) and resend/re-upload-reset flows (step 5) are not built
-yet.
+Verification (step 3) isn't built. Step 5 (CSV export) isn't built; resend
+already is (see the HR dashboard section below).
 
 See [DEPLOYMENT.md](DEPLOYMENT.md) for getting this running on Azure App
 Service.
@@ -74,11 +76,9 @@ Serves `http://localhost:3000/physical/{token}`. The page:
 - always offers both form languages for download
   (`GET /physical/{token}/download?lang=en|es`, streamed from
   `assets/forms/wellness-exam-{en,es}.pdf`)
-- collects the employee's First Name, Last Name, and Email (all required)
-  alongside the file on upload (`POST /physical/{token}/upload`, field name
-  `form`; PDF/JPG/PNG, capped at `MAX_UPLOAD_MB`) — stored on the record
-  separately from the CSV-sourced employee identity, since the person
-  uploading might not be the only one with access to the link
+- accepts an upload (`POST /physical/{token}/upload`, field name `form`;
+  PDF/JPG/PNG, capped at `MAX_UPLOAD_MB`) — no name/email re-entry needed,
+  since the unique token itself is the identity
 - once uploaded, previews the document inline next to the form
   (`GET /physical/{token}/uploaded-file` — `<img>` for JPG/PNG, the browser's
   native PDF viewer via `<iframe>` for PDFs)
@@ -94,8 +94,20 @@ unauthenticated requests redirect to `/auth/login`. In the default
 `AUTH_MODE=mock`, click "Sign in as Dev HR User" (no real credential check);
 in `AUTH_MODE=entra`, this redirects to a real Microsoft sign-in. Once in,
 `/dashboard?year=2026&status=received` shows every employee's status for that
-cycle with sent/received/completed timestamps, filterable by status. Nothing
-else yet — no per-record file view, no resend/resolve actions.
+cycle with sent/received/completed timestamps, filterable by status, plus a
+**Resend** button per row — regenerates that record's token (invalidating
+the old link), clears any uploaded-file/received/completed state, resets
+status to `sent`, and re-sends the email. Works from any status.
+
+**Manage Employees** (`/dashboard/employees`, linked from the main
+dashboard) — add a single employee (name/email/optional external
+ID/cycle year, immediately creates a record and sends the link) or upload a
+CSV (same underlying `importCycle` the CLI uses), and deactivate/reactivate
+any employee (`Employee.active`, a soft toggle — historical records/files
+are untouched, they just stop being included in future cycle imports).
+
+Not yet built: per-record file view, resolving a `needs_review` case
+directly from the dashboard, CSV export.
 
 ## Tests
 
@@ -114,12 +126,12 @@ live database, SQL Server, or Azurite.
 Confirmed against a live local environment (Docker SQL Server + Azurite), not
 just fakes/mocks:
 - `docker compose up -d` + `npx prisma migrate dev` against a real SQL Server,
-  including the round-3 migration adding the identity/preview columns
+  including the round-3 migration adding the preview columns
 - A full `import-cycle` run producing a real token, then hitting the running
   server for real: unknown token → 404, valid token page → 200, both English
-  and Spanish downloads byte-for-byte match the source PDFs, a real upload
-  with identity fields → 303 redirect with all fields persisted, and the
-  preview route serving byte-identical content back (`curl` diff against the
+  and Spanish downloads byte-for-byte match the source PDFs, a real upload →
+  303 redirect, and the preview route serving byte-identical content back
+  (`curl` diff against the
   source file) — image preview confirmed rendering correctly in a real
   browser; PDF preview confirmed correct at the HTTP/byte level, though this
   sandbox's own headless test browser doesn't render inline PDFs (no working
@@ -204,11 +216,10 @@ variants also covered in the guidelines document):
   is `sent`, `received`, or `needs_review` (to fix a mistake before HR
   finishes reviewing); only `completed` blocks both download and upload
   entirely, per the spec.
-- **Uploader identity is captured separately from the CSV-sourced employee
-  record:** `uploaderFirstName`/`uploaderLastName`/`uploaderEmail` on
-  `PhysicalRecord` reflect what was typed in at upload time, not necessarily
-  matching `Employee.fullName`/`email` — useful if a link gets forwarded or
-  someone fills it out on a colleague's behalf.
+- **No name/email re-entry on upload:** the unique per-employee token *is*
+  the identity mechanism (that's the whole point of not requiring a login),
+  so asking for First Name/Last Name/Email again at upload time would just
+  be redundant — an earlier version of this page had those fields; removed.
 - **`uploadedBlobPath`/`uploadedContentType` are stored alongside
   `uploadedFileUrl`** so the preview/download route can re-fetch the blob
   directly, rather than parsing a blob URL back into a path.
@@ -221,6 +232,15 @@ variants also covered in the guidelines document):
   fine for a single dev instance but not for a multi-instance Azure App
   Service deployment — swapping to a shared store (Redis, or Azure Table
   Storage) is a prerequisite for scaling the dashboard past one instance.
+- **`src/services/employeeActions.ts` holds the single-employee logic**
+  (upsert + create-record-if-needed + send email) shared by three call sites:
+  the CLI's CSV import, the dashboard's CSV upload, and the dashboard's
+  single "Add employee" form — one implementation instead of three copies.
+  `resendLink` (same file) generates a fresh token and fully resets a
+  record's uploaded-file/received/completed state back to a clean `sent`.
+- **"Remove employee" is a soft toggle** (`Employee.active`), not a delete —
+  historical `PhysicalRecord`s and their uploaded files are untouched;
+  deactivating just excludes them from future cycle imports.
 
 ## Not yet built (later steps per the spec)
 
@@ -228,7 +248,7 @@ variants also covered in the guidelines document):
   `needs_review` (step 3) — the upload route has a single comment marking
   where this hooks in
 - Rest of the HR dashboard (step 4): per-record file view, mark
-  `needs_review` completed/rejected, resend link, CSV export
-- Resend-link / re-upload-reset flows (step 5)
+  `needs_review` completed directly (resend already covers "reset and
+  re-upload"), CSV export
 - Audit logging of *HR* access to uploaded files — meaningful once the
   dashboard has a per-record file view to log access to

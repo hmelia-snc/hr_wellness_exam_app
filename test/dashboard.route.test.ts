@@ -2,18 +2,7 @@ import { describe, expect, it } from "vitest";
 import request from "supertest";
 import { createApp } from "../src/server.js";
 import { createFakePrisma } from "./fakePrisma.js";
-import type { BlobStorage } from "../src/lib/blobStorage.js";
-
-function fakeBlobStorage(): BlobStorage {
-  return {
-    async uploadForm() {
-      return "https://fake-blob.test/unused";
-    },
-    async downloadForm() {
-      return Buffer.from("unused");
-    },
-  };
-}
+import { createFakeBlobStorage, createFakeEmailSender } from "./fakes.js";
 
 async function seedEmployeeAndRecord(
   prisma: ReturnType<typeof createFakePrisma>,
@@ -44,7 +33,7 @@ async function seedEmployeeAndRecord(
 describe("GET /dashboard (AUTH_MODE=mock)", () => {
   it("redirects unauthenticated requests to /auth/login", async () => {
     const prisma = createFakePrisma();
-    const app = createApp(prisma as any, fakeBlobStorage());
+    const app = createApp(prisma as any, createFakeBlobStorage(), createFakeEmailSender());
 
     const res = await request(app).get("/dashboard");
     expect(res.status).toBe(302);
@@ -53,7 +42,7 @@ describe("GET /dashboard (AUTH_MODE=mock)", () => {
 
   it("shows the dev sign-in page", async () => {
     const prisma = createFakePrisma();
-    const app = createApp(prisma as any, fakeBlobStorage());
+    const app = createApp(prisma as any, createFakeBlobStorage(), createFakeEmailSender());
 
     const res = await request(app).get("/auth/login");
     expect(res.status).toBe(200);
@@ -64,7 +53,7 @@ describe("GET /dashboard (AUTH_MODE=mock)", () => {
   it("lets a dev-signed-in session see the seeded record in the status table", async () => {
     const prisma = createFakePrisma();
     await seedEmployeeAndRecord(prisma);
-    const app = createApp(prisma as any, fakeBlobStorage());
+    const app = createApp(prisma as any, createFakeBlobStorage(), createFakeEmailSender());
     const agent = request.agent(app);
 
     await agent.post("/auth/login").type("form").send({ returnTo: "/dashboard?year=2026" });
@@ -79,7 +68,7 @@ describe("GET /dashboard (AUTH_MODE=mock)", () => {
   it("filters by status via the query param", async () => {
     const prisma = createFakePrisma();
     await seedEmployeeAndRecord(prisma, { status: "sent" });
-    const app = createApp(prisma as any, fakeBlobStorage());
+    const app = createApp(prisma as any, createFakeBlobStorage(), createFakeEmailSender());
     const agent = request.agent(app);
     await agent.post("/auth/login").type("form").send({ returnTo: "/dashboard" });
 
@@ -87,5 +76,32 @@ describe("GET /dashboard (AUTH_MODE=mock)", () => {
     expect(res.status).toBe(200);
     expect(res.text).not.toContain("Jane Doe");
     expect(res.text).toMatch(/no records for this cycle/i);
+  });
+});
+
+describe("POST /dashboard/records/:id/resend", () => {
+  it("generates a fresh token, resets to sent, and redirects back preserving filters", async () => {
+    const prisma = createFakePrisma();
+    const emailSender = createFakeEmailSender();
+    const { record } = await seedEmployeeAndRecord(prisma, {
+      status: "needs_review",
+      receivedAt: new Date(),
+      uploadedFileUrl: "https://fake-blob.test/old-file.pdf",
+    });
+    const app = createApp(prisma as any, createFakeBlobStorage(), emailSender);
+    const agent = request.agent(app);
+    await agent.post("/auth/login").type("form").send({ returnTo: "/dashboard" });
+
+    const res = await agent.post(`/dashboard/records/${record.id}/resend?year=2026&status=needs_review`);
+    expect(res.status).toBe(303);
+    expect(res.headers.location).toBe("/dashboard?year=2026&status=needs_review");
+
+    const updated = prisma._state.physicalRecords.find((r: any) => r.id === record.id);
+    expect(updated.status).toBe("sent");
+    expect(updated.tokenHash).not.toBe("unused-hash");
+    expect(updated.receivedAt).toBeNull();
+    expect(updated.uploadedFileUrl).toBeNull();
+    expect(emailSender.sent).toHaveLength(1);
+    expect(emailSender.sent[0].toEmail).toBe("jane.doe@example.com");
   });
 });

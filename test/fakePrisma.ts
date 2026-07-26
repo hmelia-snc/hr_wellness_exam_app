@@ -22,6 +22,24 @@ export function createFakePrisma() {
         employeesByEmail.set(where.email, created);
         return created;
       },
+      async findUnique({ where }: any) {
+        if (where.id) {
+          return [...employeesByEmail.values()].find((e) => e.id === where.id) ?? null;
+        }
+        if (where.email) {
+          return employeesByEmail.get(where.email) ?? null;
+        }
+        throw new Error(`fakePrisma.employee.findUnique: unsupported where clause ${JSON.stringify(where)}`);
+      },
+      async update({ where, data }: any) {
+        const employee = [...employeesByEmail.values()].find((e) => e.id === where.id);
+        if (!employee) throw new Error(`fakePrisma.employee.update: no employee with id ${where.id}`);
+        Object.assign(employee, data);
+        return employee;
+      },
+      async findMany() {
+        return [...employeesByEmail.values()];
+      },
     },
     physicalRecord: {
       async findUnique({ where }: any) {

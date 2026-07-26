@@ -36,9 +36,6 @@ model PhysicalRecord {
   uploadedFileUrl    String?
   uploadedBlobPath   String?
   uploadedContentType String?
-  uploaderFirstName  String?
-  uploaderLastName   String?
-  uploaderEmail      String?
   verificationResult String?
   reviewedBy         String?
   reviewedAt         DateTime?

@@ -7,11 +7,13 @@ import type { PrismaClient } from "@prisma/client";
 import { createPhysicalRouter } from "./routes/physical.js";
 import { createAuthRouter } from "./routes/auth.js";
 import { createDashboardRouter } from "./routes/dashboard.js";
+import { createEmployeesRouter } from "./routes/employees.js";
 import type { BlobStorage } from "./lib/blobStorage.js";
+import type { EmailSender } from "./lib/email/types.js";
 import { getEnv } from "./config/env.js";
 import { renderHomePage } from "./views/homePage.js";
 
-export function createApp(prisma: PrismaClient, blobStorage: BlobStorage) {
+export function createApp(prisma: PrismaClient, blobStorage: BlobStorage, emailSender: EmailSender) {
   const app = express();
   const env = getEnv();
 
@@ -55,7 +57,8 @@ export function createApp(prisma: PrismaClient, blobStorage: BlobStorage) {
 
   app.use("/physical", physicalLimiter, createPhysicalRouter(prisma, blobStorage));
   app.use("/auth", createAuthRouter());
-  app.use("/dashboard", createDashboardRouter(prisma));
+  app.use("/dashboard", createDashboardRouter(prisma, emailSender));
+  app.use("/dashboard/employees", createEmployeesRouter(prisma, emailSender));
 
   app.use((err: unknown, _req: Request, res: Response, _next: NextFunction) => {
     if (err instanceof MulterError && err.code === "LIMIT_FILE_SIZE") {

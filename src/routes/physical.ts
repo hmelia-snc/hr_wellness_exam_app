@@ -2,7 +2,6 @@ import path from "node:path";
 import { randomUUID } from "node:crypto";
 import { Router, type Request, type Response, type NextFunction } from "express";
 import multer from "multer";
-import { z } from "zod";
 import type { PrismaClient, PhysicalRecord } from "@prisma/client";
 import { validateToken } from "../lib/tokenValidation.js";
 import { renderPhysicalPage, renderBlockedPage, type PhysicalPageStatus } from "../views/physicalPage.js";
@@ -29,12 +28,6 @@ const ALLOWED_MIME_TYPES: Record<string, string> = {
   "image/jpeg": ".jpg",
   "image/png": ".png",
 };
-
-const uploadFieldsSchema = z.object({
-  firstName: z.string({ required_error: "First name is required." }).trim().min(1, "First name is required."),
-  lastName: z.string({ required_error: "Last name is required." }).trim().min(1, "Last name is required."),
-  email: z.string({ required_error: "A valid email is required." }).trim().email("A valid email is required."),
-});
 
 export function createPhysicalRouter(prisma: PrismaClient, blobStorage: BlobStorage): Router {
   const router = Router();
@@ -107,11 +100,6 @@ export function createPhysicalRouter(prisma: PrismaClient, blobStorage: BlobStor
     upload.single("form"),
     async (req: RequestWithRecord, res: Response, next: NextFunction) => {
       try {
-        const fields = uploadFieldsSchema.safeParse(req.body);
-        if (!fields.success) {
-          res.status(400).send(fields.error.issues.map((issue) => issue.message).join(" "));
-          return;
-        }
         if (!req.file) {
           res.status(400).send("No file uploaded.");
           return;
@@ -127,9 +115,6 @@ export function createPhysicalRouter(prisma: PrismaClient, blobStorage: BlobStor
             uploadedFileUrl,
             uploadedBlobPath: blobPath,
             uploadedContentType: req.file.mimetype,
-            uploaderFirstName: fields.data.firstName,
-            uploaderLastName: fields.data.lastName,
-            uploaderEmail: fields.data.email,
             status: "received",
             receivedAt: new Date(),
           },

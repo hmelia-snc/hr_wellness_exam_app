@@ -64,12 +64,6 @@ ${statusNotice(status)}
 <section>
   <h2>2. Upload your completed form / Suba su formulario completado</h2>
   <form action="/physical/${safeToken}/upload" method="post" enctype="multipart/form-data">
-    <label for="firstName">First Name / Nombre</label>
-    <input type="text" id="firstName" name="firstName" required />
-    <label for="lastName">Last Name / Apellido</label>
-    <input type="text" id="lastName" name="lastName" required />
-    <label for="email">Email / Correo Electrónico</label>
-    <input type="email" id="email" name="email" required />
     <label for="form">Completed form / Formulario completado</label>
     <input type="file" id="form" name="form" accept=".pdf,.jpg,.jpeg,.png" required />
     <div><button type="submit" style="margin-top: 1rem;">Upload / Subir</button></div>
