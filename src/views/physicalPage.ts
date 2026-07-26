@@ -1,0 +1,116 @@
+import { escapeHtml } from "../lib/html.js";
+import { renderLayout } from "./layout.js";
+
+export type PhysicalPageStatus = "sent" | "received" | "needs_review";
+export type BlockedPageKind = "not_found" | "expired" | "completed";
+
+export interface UploadedFileInfo {
+  contentType: string;
+}
+
+const EXTRA_STYLES = `
+  .content-columns { display: flex; gap: 2rem; align-items: flex-start; flex-wrap: wrap; }
+  .content-main { flex: 1 1 320px; min-width: 280px; }
+  .content-preview { flex: 1 1 280px; min-width: 240px; }
+  .preview-frame { width: 100%; height: 480px; border: 1px solid #ddd; border-radius: 6px; background: #fff; }
+  .preview-image { max-width: 100%; border: 1px solid #ddd; border-radius: 6px; }
+  @media (prefers-color-scheme: dark) {
+    .preview-frame { border-color: #3a3836; }
+    .preview-image { border-color: #3a3836; }
+  }
+`;
+
+function statusNotice(status: PhysicalPageStatus): string {
+  switch (status) {
+    case "sent":
+      return "";
+    case "received":
+      return `<p class="notice">We've received your uploaded form — thank you! If you need to replace it, upload a new one below.<br>Hemos recibido su formulario — ¡gracias! Si necesita reemplazarlo, suba uno nuevo a continuación.</p>`;
+    case "needs_review":
+      return `<p class="notice">Your form is being reviewed by HR. If you need to replace it, upload a new one below.<br>Su formulario está siendo revisado por Recursos Humanos. Si necesita reemplazarlo, suba uno nuevo a continuación.</p>`;
+  }
+}
+
+function renderPreviewColumn(safeToken: string, contentType: string): string {
+  const previewUrl = `/physical/${safeToken}/uploaded-file`;
+  const viewer = contentType.startsWith("image/")
+    ? `<img class="preview-image" src="${previewUrl}" alt="Uploaded form" />`
+    : `<iframe class="preview-frame" src="${previewUrl}" title="Uploaded form"></iframe>`;
+  return `
+<div class="content-preview">
+  <h2>Uploaded document / Documento subido</h2>
+  ${viewer}
+</div>`;
+}
+
+export function renderPhysicalPage(
+  token: string,
+  status: PhysicalPageStatus,
+  uploadedFile: UploadedFileInfo | null = null
+): string {
+  const safeToken = encodeURIComponent(token);
+
+  const mainColumn = `
+<div class="content-main">
+<h1>Annual Physical Exam Form / Formulario de Examen Físico Anual</h1>
+${statusNotice(status)}
+<section>
+  <h2>1. Download the blank form / Descargue el formulario en blanco</h2>
+  <div class="downloads">
+    <a class="button" href="/physical/${safeToken}/download?lang=en">Download (English)</a>
+    <a class="button" href="/physical/${safeToken}/download?lang=es">Descargar (Español)</a>
+  </div>
+</section>
+<section>
+  <h2>2. Upload your completed form / Suba su formulario completado</h2>
+  <form action="/physical/${safeToken}/upload" method="post" enctype="multipart/form-data">
+    <label for="firstName">First Name / Nombre</label>
+    <input type="text" id="firstName" name="firstName" required />
+    <label for="lastName">Last Name / Apellido</label>
+    <input type="text" id="lastName" name="lastName" required />
+    <label for="email">Email / Correo Electrónico</label>
+    <input type="email" id="email" name="email" required />
+    <label for="form">Completed form / Formulario completado</label>
+    <input type="file" id="form" name="form" accept=".pdf,.jpg,.jpeg,.png" required />
+    <div><button type="submit" style="margin-top: 1rem;">Upload / Subir</button></div>
+  </form>
+</section>
+</div>`;
+
+  const body = `<div class="content-columns">${mainColumn}${
+    uploadedFile ? renderPreviewColumn(safeToken, uploadedFile.contentType) : ""
+  }</div>`;
+
+  return renderLayout("Annual Physical Form", body, {
+    wide: Boolean(uploadedFile),
+    extraStyles: EXTRA_STYLES,
+  });
+}
+
+export function renderBlockedPage(kind: BlockedPageKind): string {
+  const copy = blockedCopy(kind);
+  return renderLayout(copy.title, `<h1>${escapeHtml(copy.title)}</h1><p>${copy.message}</p>`);
+}
+
+function blockedCopy(kind: BlockedPageKind): { title: string; message: string } {
+  switch (kind) {
+    case "expired":
+      return {
+        title: "Link expired / Enlace vencido",
+        message:
+          "This link has expired. Please contact HR for a new one.<br>Este enlace ha vencido. Comuníquese con Recursos Humanos para obtener uno nuevo.",
+      };
+    case "completed":
+      return {
+        title: "Already completed / Ya completado",
+        message:
+          "This form has already been completed — thank you!<br>Este formulario ya ha sido completado — ¡gracias!",
+      };
+    case "not_found":
+      return {
+        title: "Link not found / Enlace no encontrado",
+        message:
+          "We couldn't find this link. Please check the URL or contact HR.<br>No pudimos encontrar este enlace. Verifique la URL o comuníquese con Recursos Humanos.",
+      };
+  }
+}

@@ -1,0 +1,61 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlserver"
+  url      = env("DATABASE_URL")
+}
+
+// Prisma's sqlserver connector has no native enum support, so `status` is a
+// plain String constrained at the application layer (see src/lib/status.ts)
+// rather than a Prisma enum.
+model Employee {
+  id                  String   @id @default(uuid())
+  fullName            String
+  email               String   @unique
+  employeeIdExternal  String?
+  active              Boolean  @default(true)
+  createdAt           DateTime @default(now())
+
+  physicalRecords PhysicalRecord[]
+
+  @@map("employees")
+}
+
+model PhysicalRecord {
+  id                 String    @id @default(uuid())
+  employeeId         String
+  cycleYear          Int
+  tokenHash          String    @unique
+  tokenExpiresAt     DateTime
+  status             String    @default("sent")
+  sentAt             DateTime?
+  receivedAt         DateTime?
+  completedAt        DateTime?
+  uploadedFileUrl    String?
+  uploadedBlobPath   String?
+  uploadedContentType String?
+  uploaderFirstName  String?
+  uploaderLastName   String?
+  uploaderEmail      String?
+  verificationResult String?
+  reviewedBy         String?
+  reviewedAt         DateTime?
+  createdAt          DateTime  @default(now())
+  updatedAt          DateTime  @updatedAt
+
+  employee Employee @relation(fields: [employeeId], references: [id])
+
+  @@unique([employeeId, cycleYear])
+  @@map("physical_records")
+}
+
+model UploadBatch {
+  id         String   @id @default(uuid())
+  uploadedBy String
+  uploadedAt DateTime @default(now())
+  rowCount   Int
+
+  @@map("upload_batches")
+}
