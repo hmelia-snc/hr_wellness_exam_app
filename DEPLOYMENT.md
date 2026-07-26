@@ -1,9 +1,11 @@
 # Deploying to Azure
 
-This has never been run against a real Azure subscription — there's no `az`
-or `gh` CLI access in the environment this was built in, so everything below
-is based on documented Azure/GitHub Actions behavior, not a verified deploy.
-Expect to debug the first run against real App Service logs.
+This has been run end-to-end against a real Azure subscription
+(`hr-physical-tracker.azurewebsites.net`, `centralus`) and is live. A few
+real issues turned up along the way that aren't obvious from the docs —
+see "Known limitations" at the bottom, and the provisioning script/workflow
+already reflect the fixes (Node runtime version, Basic Auth publishing
+credentials, `NPM_CONFIG_PRODUCTION=false`).
 
 ## 0. Prerequisites
 
@@ -137,6 +139,16 @@ HR Dashboard link).
   intentional (`src/config/env.ts`), not a bug. If the app won't start in
   Azure, check that `AUTH_MODE=entra` and all four `ENTRA_*` settings are
   actually set.
-- This whole deployment path is unverified against real Azure — the first
-  push is genuinely a first attempt, not a re-confirmation of something
-  already tested.
+- **A deploy doesn't always restart the running container.** Observed once:
+  a push succeeded (build/test/deploy all green), but the site kept serving
+  the previous build (new routes 404'd) until an explicit `az webapp restart
+  --name <APP_NAME> --resource-group <RESOURCE_GROUP>`. Not fully understood
+  why the deploy's own restart didn't take effect that time — if a route you
+  just deployed 404s, try a manual restart before assuming the code is
+  wrong.
+
+This has been deployed and verified against real Azure: App Service is live
+at `hr-physical-tracker.azurewebsites.net`, both Entra app registrations
+(mail-send and dashboard SSO) exist and work, `prisma migrate deploy` has
+applied real migrations against production Azure SQL, and the dashboard/auth
+flow has been exercised end-to-end there.
