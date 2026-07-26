@@ -16,7 +16,7 @@ set -euo pipefail
 
 # --- Edit these before running ---
 RESOURCE_GROUP="hrapp-rg"
-LOCATION="eastus2"
+LOCATION="centralus"
 APP_NAME="hr-physical-tracker"          # must be globally unique (becomes <APP_NAME>.azurewebsites.net)
 APP_SERVICE_PLAN="hrapp-plan"
 APP_SERVICE_SKU="B1"                    # cost-conscious default; upgrade later if needed
@@ -47,12 +47,14 @@ az appservice plan create \
   --is-linux \
   --output none
 
-echo "==> Web app (Node 20 LTS): $APP_NAME"
+echo "==> Web app (Node 22 LTS): $APP_NAME"
+# Node 20 LTS was retired from Azure App Service's supported runtime list;
+# 22 LTS is the oldest still offered and satisfies this app's engines>=20.
 az webapp create \
   --name "$APP_NAME" \
   --resource-group "$RESOURCE_GROUP" \
   --plan "$APP_SERVICE_PLAN" \
-  --runtime "NODE:20-lts" \
+  --runtime "NODE:22-lts" \
   --output none
 
 echo "==> Azure SQL logical server: $SQL_SERVER_NAME"
