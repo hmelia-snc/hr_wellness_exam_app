@@ -56,10 +56,23 @@ below, or two separate ones — separate is cleaner if different people manage
 4. Certificates & secrets → New client secret → copy the value.
 5. Set on App Service: `ENTRA_TENANT_ID`, `ENTRA_CLIENT_ID`,
    `ENTRA_CLIENT_SECRET`, `ENTRA_REDIRECT_URI`.
-6. Optional: to restrict the dashboard to an HR security group, find that
-   group's Object ID (Entra ID → Groups) and set `HR_GROUP_OBJECT_ID` on App
-   Service. This only works if the app registration is configured to emit a
-   `groups` claim (Token configuration → Add groups claim).
+6. Optional: to restrict the dashboard to an HR security group:
+   ```bash
+   # Find the group's Object ID
+   az ad group list --display-name "<Group Display Name>" --query "[].{displayName:displayName, id:id}" -o table
+
+   # The app registration must emit a groups claim in the ID token
+   az ad app update --id <ENTRA_CLIENT_ID> --set groupMembershipClaims=SecurityGroup
+
+   # Then set the group's Object ID on App Service and restart
+   az webapp config appsettings set --name <APP_NAME> --resource-group <RESOURCE_GROUP> \
+     --settings HR_GROUP_OBJECT_ID=<group-object-id>
+   az webapp restart --name <APP_NAME> --resource-group <RESOURCE_GROUP>
+   ```
+   Without `HR_GROUP_OBJECT_ID` set, any authenticated tenant user can sign
+   in. Note: Azure AD only includes direct group membership in the token up
+   to 200 groups per user — an unlikely edge case for a small tenant, but
+   worth knowing if a user is in an unusually large number of groups.
 
 Set all of these via the Portal (App Service → Configuration) or:
 ```bash
