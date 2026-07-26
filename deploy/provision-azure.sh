@@ -57,6 +57,16 @@ az webapp create \
   --runtime "NODE:22-lts" \
   --output none
 
+# New App Services disable Basic Auth (SCM/FTP) publishing credentials by
+# default; azure/webapps-deploy's publish-profile auth needs SCM enabled.
+# FTP stays disabled since nothing here uses it. A future hardening step is
+# switching CI to OIDC federated auth instead, which wouldn't need this at all.
+SUB_ID="$(az account show --query id -o tsv)"
+az resource update \
+  --ids "/subscriptions/${SUB_ID}/resourceGroups/${RESOURCE_GROUP}/providers/Microsoft.Web/sites/${APP_NAME}/basicPublishingCredentialsPolicies/scm" \
+  --set properties.allow=true \
+  --output none
+
 echo "==> Azure SQL logical server: $SQL_SERVER_NAME"
 az sql server create \
   --name "$SQL_SERVER_NAME" \
@@ -124,6 +134,7 @@ az webapp config appsettings set \
     AZURE_STORAGE_CONNECTION_STRING="$STORAGE_CONNECTION_STRING" \
     SESSION_SECRET="$SESSION_SECRET" \
     SCM_DO_BUILD_DURING_DEPLOYMENT=true \
+    NPM_CONFIG_PRODUCTION=false \
   --output none
 
 echo ""
