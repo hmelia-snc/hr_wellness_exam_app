@@ -13,11 +13,20 @@ function daysFromNow(days: number): Date {
   return date;
 }
 
-function seedRecord(prisma: ReturnType<typeof createFakePrisma>, overrides: Partial<Record<string, unknown>> = {}) {
+async function seedRecord(
+  prisma: ReturnType<typeof createFakePrisma>,
+  overrides: Partial<Record<string, unknown>> = {},
+  employeeOverrides: Partial<Record<string, unknown>> = {}
+) {
+  const employee = await prisma.employee.upsert({
+    where: { email: "physical-test@example.com" },
+    create: { email: "physical-test@example.com", fullName: "Physical Test", active: true, ...employeeOverrides },
+    update: { ...employeeOverrides },
+  });
   const { rawToken, tokenHash } = generateToken();
   const record = {
     id: "rec-1",
-    employeeId: "emp-1",
+    employeeId: employee.id,
     cycleYear: 2026,
     tokenHash,
     tokenExpiresAt: daysFromNow(10),
@@ -25,7 +34,7 @@ function seedRecord(prisma: ReturnType<typeof createFakePrisma>, overrides: Part
     ...overrides,
   };
   prisma._state.physicalRecords.push(record);
-  return { rawToken, record };
+  return { rawToken, record, employee };
 }
 
 describe("GET /physical/:token", () => {
@@ -40,7 +49,7 @@ describe("GET /physical/:token", () => {
 
   it("returns 410 for an expired token", async () => {
     const prisma = createFakePrisma();
-    const { rawToken } = seedRecord(prisma, { tokenExpiresAt: daysFromNow(-1) });
+    const { rawToken } = await seedRecord(prisma, { tokenExpiresAt: daysFromNow(-1) });
     const app = createApp(prisma as any, createFakeBlobStorage(), createFakeEmailSender());
 
     const res = await request(app).get(`/physical/${rawToken}`);
@@ -50,7 +59,7 @@ describe("GET /physical/:token", () => {
 
   it("shows a blocked page with no upload form once completed", async () => {
     const prisma = createFakePrisma();
-    const { rawToken } = seedRecord(prisma, { status: "completed" });
+    const { rawToken } = await seedRecord(prisma, { status: "completed" });
     const app = createApp(prisma as any, createFakeBlobStorage(), createFakeEmailSender());
 
     const res = await request(app).get(`/physical/${rawToken}`);
@@ -61,7 +70,7 @@ describe("GET /physical/:token", () => {
 
   it("shows download links and an upload form for a valid sent record", async () => {
     const prisma = createFakePrisma();
-    const { rawToken } = seedRecord(prisma, { status: "sent" });
+    const { rawToken } = await seedRecord(prisma, { status: "sent" });
     const app = createApp(prisma as any, createFakeBlobStorage(), createFakeEmailSender());
 
     const res = await request(app).get(`/physical/${rawToken}`);
@@ -75,7 +84,7 @@ describe("GET /physical/:token", () => {
 describe("GET /physical/:token/download", () => {
   it("streams the English PDF by default and with lang=en", async () => {
     const prisma = createFakePrisma();
-    const { rawToken } = seedRecord(prisma);
+    const { rawToken } = await seedRecord(prisma);
     const app = createApp(prisma as any, createFakeBlobStorage(), createFakeEmailSender());
     const expected = readFileSync(path.resolve(process.cwd(), "assets/forms/wellness-exam-en.pdf"));
 
@@ -88,7 +97,7 @@ describe("GET /physical/:token/download", () => {
 
   it("streams the Spanish PDF with lang=es", async () => {
     const prisma = createFakePrisma();
-    const { rawToken } = seedRecord(prisma);
+    const { rawToken } = await seedRecord(prisma);
     const app = createApp(prisma as any, createFakeBlobStorage(), createFakeEmailSender());
     const expected = readFileSync(path.resolve(process.cwd(), "assets/forms/wellness-exam-es.pdf"));
 
@@ -100,7 +109,7 @@ describe("GET /physical/:token/download", () => {
 
   it("blocks a download for a completed record", async () => {
     const prisma = createFakePrisma();
-    const { rawToken } = seedRecord(prisma, { status: "completed" });
+    const { rawToken } = await seedRecord(prisma, { status: "completed" });
     const app = createApp(prisma as any, createFakeBlobStorage(), createFakeEmailSender());
 
     const res = await request(app).get(`/physical/${rawToken}/download`);
@@ -112,7 +121,7 @@ describe("GET /physical/:token/download", () => {
 describe("POST /physical/:token/upload", () => {
   it("uploads the file, marks the record received, and redirects back to the page", async () => {
     const prisma = createFakePrisma();
-    const { rawToken, record } = seedRecord(prisma);
+    const { rawToken, record } = await seedRecord(prisma);
     const blobStorage = createFakeBlobStorage();
     const app = createApp(prisma as any, blobStorage, createFakeEmailSender());
 
@@ -137,7 +146,7 @@ describe("POST /physical/:token/upload", () => {
 
   it("rejects an unsupported file type with 400 and doesn't touch the record", async () => {
     const prisma = createFakePrisma();
-    const { rawToken, record } = seedRecord(prisma);
+    const { rawToken, record } = await seedRecord(prisma);
     const blobStorage = createFakeBlobStorage();
     const app = createApp(prisma as any, blobStorage, createFakeEmailSender());
 
@@ -154,7 +163,7 @@ describe("POST /physical/:token/upload", () => {
 
   it("blocks an upload for a completed record before any file parsing", async () => {
     const prisma = createFakePrisma();
-    const { rawToken } = seedRecord(prisma, { status: "completed" });
+    const { rawToken } = await seedRecord(prisma, { status: "completed" });
     const blobStorage = createFakeBlobStorage();
     const app = createApp(prisma as any, blobStorage, createFakeEmailSender());
 
@@ -165,10 +174,93 @@ describe("POST /physical/:token/upload", () => {
   });
 });
 
+describe("POST /physical/:token/upload with a spouse form", () => {
+  it("shows the spouse file input and status line when the employee needs one", async () => {
+    const prisma = createFakePrisma();
+    const { rawToken } = await seedRecord(prisma, {}, { needsSpouseForm: true });
+    const app = createApp(prisma as any, createFakeBlobStorage(), createFakeEmailSender());
+
+    const res = await request(app).get(`/physical/${rawToken}`);
+    expect(res.status).toBe(200);
+    expect(res.text).toContain('name="spouseForm"');
+    expect(res.text).toMatch(/not yet received/i);
+  });
+
+  it("does not show the spouse file input when the employee doesn't need one", async () => {
+    const prisma = createFakePrisma();
+    const { rawToken } = await seedRecord(prisma);
+    const app = createApp(prisma as any, createFakeBlobStorage(), createFakeEmailSender());
+
+    const res = await request(app).get(`/physical/${rawToken}`);
+    expect(res.text).not.toContain('name="spouseForm"');
+  });
+
+  it("accepts the spouse's file alone without touching the employee's own status/receivedAt", async () => {
+    const prisma = createFakePrisma();
+    const { rawToken, record } = await seedRecord(prisma, {}, { needsSpouseForm: true });
+    const blobStorage = createFakeBlobStorage();
+    const app = createApp(prisma as any, blobStorage, createFakeEmailSender());
+
+    const res = await request(app)
+      .post(`/physical/${rawToken}/upload`)
+      .attach("spouseForm", Buffer.from("%PDF-1.4 spouse content"), {
+        filename: "spouse.pdf",
+        contentType: "application/pdf",
+      });
+
+    expect(res.status).toBe(303);
+    const updated = prisma._state.physicalRecords.find((r: any) => r.id === record.id);
+    expect(updated.status).toBe("sent");
+    expect(updated.receivedAt).toBeUndefined();
+    expect(updated.spouseReceivedAt).toBeInstanceOf(Date);
+    expect(updated.spouseUploadedContentType).toBe("application/pdf");
+    expect(blobStorage.uploads[0].blobPath).toContain("spouse-");
+  });
+
+  it("accepts both files in the same request", async () => {
+    const prisma = createFakePrisma();
+    const { rawToken, record } = await seedRecord(prisma, {}, { needsSpouseForm: true });
+    const blobStorage = createFakeBlobStorage();
+    const app = createApp(prisma as any, blobStorage, createFakeEmailSender());
+
+    const res = await request(app)
+      .post(`/physical/${rawToken}/upload`)
+      .attach("form", Buffer.from("%PDF-1.4 employee content"), { filename: "mine.pdf", contentType: "application/pdf" })
+      .attach("spouseForm", Buffer.from("%PDF-1.4 spouse content"), {
+        filename: "spouse.pdf",
+        contentType: "application/pdf",
+      });
+
+    expect(res.status).toBe(303);
+    expect(blobStorage.uploads).toHaveLength(2);
+    const updated = prisma._state.physicalRecords.find((r: any) => r.id === record.id);
+    expect(updated.status).toBe("received");
+    expect(updated.receivedAt).toBeInstanceOf(Date);
+    expect(updated.spouseReceivedAt).toBeInstanceOf(Date);
+  });
+
+  it("rejects a spouse file for an employee who doesn't need one", async () => {
+    const prisma = createFakePrisma();
+    const { rawToken } = await seedRecord(prisma);
+    const blobStorage = createFakeBlobStorage();
+    const app = createApp(prisma as any, blobStorage, createFakeEmailSender());
+
+    const res = await request(app)
+      .post(`/physical/${rawToken}/upload`)
+      .attach("spouseForm", Buffer.from("%PDF-1.4 spouse content"), {
+        filename: "spouse.pdf",
+        contentType: "application/pdf",
+      });
+
+    expect(res.status).toBe(400);
+    expect(blobStorage.uploads).toHaveLength(0);
+  });
+});
+
 describe("GET /physical/:token/uploaded-file", () => {
   it("404s before any file has been uploaded", async () => {
     const prisma = createFakePrisma();
-    const { rawToken } = seedRecord(prisma);
+    const { rawToken } = await seedRecord(prisma);
     const app = createApp(prisma as any, createFakeBlobStorage(), createFakeEmailSender());
 
     const res = await request(app).get(`/physical/${rawToken}/uploaded-file`);
@@ -177,7 +269,7 @@ describe("GET /physical/:token/uploaded-file", () => {
 
   it("streams the uploaded file with its stored content type after upload", async () => {
     const prisma = createFakePrisma();
-    const { rawToken } = seedRecord(prisma);
+    const { rawToken } = await seedRecord(prisma);
     const blobStorage = createFakeBlobStorage();
     const app = createApp(prisma as any, blobStorage, createFakeEmailSender());
 

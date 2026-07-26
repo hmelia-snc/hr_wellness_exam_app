@@ -115,4 +115,16 @@ describe("importCycle", () => {
     expect(result.employeesSeen).toBe(1);
     expect(result.recordsCreated).toBe(1);
   });
+
+  it("passes needs_spouse_form through to the created employee", async () => {
+    const prisma = createFakePrisma();
+    const sender = fakeEmailSender();
+    const csvWithSpouseFlag =
+      "full_name,email,needs_spouse_form\nJane Doe,jane@example.com,yes\nJohn Smith,john@example.com,\n";
+
+    await importCycle(prisma as any, sender, { csvContent: csvWithSpouseFlag, cycleYear: 2026, uploadedBy: "hr-admin" });
+
+    expect(prisma._state.employeesByEmail.get("jane@example.com").needsSpouseForm).toBe(true);
+    expect(prisma._state.employeesByEmail.get("john@example.com").needsSpouseForm).toBe(false);
+  });
 });

@@ -4,6 +4,7 @@ import { getEnv, type Env } from "../config/env.js";
 export interface BlobStorage {
   uploadForm(buffer: Buffer, blobPath: string, contentType: string): Promise<string>;
   downloadForm(blobPath: string): Promise<Buffer>;
+  deleteForm(blobPath: string): Promise<void>;
 }
 
 /**
@@ -35,6 +36,11 @@ export class AzureBlobStorage implements BlobStorage {
   async downloadForm(blobPath: string): Promise<Buffer> {
     const blockBlobClient = this.containerClient.getBlockBlobClient(blobPath);
     return blockBlobClient.downloadToBuffer();
+  }
+
+  async deleteForm(blobPath: string): Promise<void> {
+    const blockBlobClient = this.containerClient.getBlockBlobClient(blobPath);
+    await blockBlobClient.deleteIfExists();
   }
 }
 

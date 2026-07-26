@@ -1,6 +1,7 @@
 import type { PrismaClient } from "@prisma/client";
 import { generateToken, tokenExpiryDate } from "../lib/token.js";
 import type { EmailSender } from "../lib/email/types.js";
+import type { BlobStorage } from "../lib/blobStorage.js";
 import { getEnv } from "../config/env.js";
 
 export interface UpsertEmployeeInput {
@@ -8,6 +9,9 @@ export interface UpsertEmployeeInput {
   email: string;
   employeeIdExternal?: string;
   cycleYear: number;
+  // undefined = don't touch the existing value (e.g. a CSV re-import with no
+  // needs_spouse_form column shouldn't clobber a value set later in the UI).
+  needsSpouseForm?: boolean;
 }
 
 export interface UpsertEmployeeResult {
@@ -37,11 +41,13 @@ export async function upsertEmployeeAndSendLink(
       fullName: input.fullName,
       employeeIdExternal: input.employeeIdExternal,
       active: true,
+      ...(input.needsSpouseForm !== undefined ? { needsSpouseForm: input.needsSpouseForm } : {}),
     },
     update: {
       fullName: input.fullName,
       employeeIdExternal: input.employeeIdExternal,
       active: true,
+      ...(input.needsSpouseForm !== undefined ? { needsSpouseForm: input.needsSpouseForm } : {}),
     },
   });
 
@@ -187,4 +193,29 @@ export async function generateShareableLink(
     employeeEmail: employee.email,
     cycleYear,
   };
+}
+
+/**
+ * Full purge: deletes the employee, every physical_records row across all
+ * cycle years, and any uploaded blobs (employee's and spouse's). Blob
+ * deletion is best-effort — an orphaned blob is low-stakes, a delete stuck
+ * behind a flaky storage call isn't, so failures are logged, not thrown.
+ * Irreversible; the caller is responsible for confirming with the user.
+ */
+export async function deleteEmployee(prisma: PrismaClient, blobStorage: BlobStorage, employeeId: string): Promise<void> {
+  const records = await prisma.physicalRecord.findMany({ where: { employeeId } });
+
+  for (const record of records) {
+    for (const blobPath of [record.uploadedBlobPath, record.spouseUploadedBlobPath]) {
+      if (!blobPath) continue;
+      try {
+        await blobStorage.deleteForm(blobPath);
+      } catch (err) {
+        console.error(`[deleteEmployee] failed to delete blob ${blobPath}:`, err instanceof Error ? err.message : err);
+      }
+    }
+  }
+
+  await prisma.physicalRecord.deleteMany({ where: { employeeId } });
+  await prisma.employee.delete({ where: { id: employeeId } });
 }

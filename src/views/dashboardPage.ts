@@ -11,6 +11,14 @@ export interface DashboardRecordRow {
   sentAt: Date | null;
   receivedAt: Date | null;
   completedAt: Date | null;
+  needsSpouseForm: boolean;
+  spouseReceivedAt: Date | null;
+}
+
+function progressLabel(r: Pick<DashboardRecordRow, "receivedAt" | "needsSpouseForm" | "spouseReceivedAt">): string {
+  const total = r.needsSpouseForm ? 2 : 1;
+  const done = (r.receivedAt ? 1 : 0) + (r.needsSpouseForm && r.spouseReceivedAt ? 1 : 0);
+  return `${done} of ${total}`;
 }
 
 export interface DashboardPageProps {
@@ -79,6 +87,7 @@ export function renderDashboardPage(props: DashboardPageProps): string {
       <td>${escapeHtml(r.employeeName)}</td>
       <td>${escapeHtml(r.employeeEmail)}</td>
       <td><span class="status-badge status-${escapeHtml(r.status)}">${escapeHtml(r.status)}</span></td>
+      <td>${progressLabel(r)}</td>
       <td>${formatDate(r.sentAt)}</td>
       <td>${formatDate(r.receivedAt)}</td>
       <td>${formatDate(r.completedAt)}</td>
@@ -121,9 +130,9 @@ ${resendFailedNotice}
 </div>
 <table>
   <thead>
-    <tr><th>Employee</th><th>Email</th><th>Status</th><th>Sent</th><th>Received</th><th>Completed</th><th></th></tr>
+    <tr><th>Employee</th><th>Email</th><th>Status</th><th>Progress</th><th>Sent</th><th>Received</th><th>Completed</th><th></th></tr>
   </thead>
-  <tbody>${rows || `<tr><td colspan="7">No records for this cycle${props.statusFilter ? ` with status "${escapeHtml(props.statusFilter)}"` : ""}.</td></tr>`}</tbody>
+  <tbody>${rows || `<tr><td colspan="8">No records for this cycle${props.statusFilter ? ` with status "${escapeHtml(props.statusFilter)}"` : ""}.</td></tr>`}</tbody>
 </table>
 `;
 

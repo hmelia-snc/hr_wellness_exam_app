@@ -16,6 +16,7 @@ model Employee {
   email               String   @unique
   employeeIdExternal  String?
   active              Boolean  @default(true)
+  needsSpouseForm     Boolean  @default(false)
   createdAt           DateTime @default(now())
 
   physicalRecords PhysicalRecord[]
@@ -36,6 +37,10 @@ model PhysicalRecord {
   uploadedFileUrl    String?
   uploadedBlobPath   String?
   uploadedContentType String?
+  spouseUploadedFileUrl    String?
+  spouseUploadedBlobPath   String?
+  spouseUploadedContentType String?
+  spouseReceivedAt   DateTime?
   verificationResult String?
   reviewedBy         String?
   reviewedAt         DateTime?

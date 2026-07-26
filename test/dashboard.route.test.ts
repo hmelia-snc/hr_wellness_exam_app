@@ -6,12 +6,13 @@ import { createFakeBlobStorage, createFakeEmailSender } from "./fakes.js";
 
 async function seedEmployeeAndRecord(
   prisma: ReturnType<typeof createFakePrisma>,
-  overrides: Partial<Record<string, unknown>> = {}
+  overrides: Partial<Record<string, unknown>> = {},
+  employeeOverrides: Partial<Record<string, unknown>> = {}
 ) {
   const employee = await prisma.employee.upsert({
     where: { email: "jane.doe@example.com" },
-    create: { email: "jane.doe@example.com", fullName: "Jane Doe", active: true },
-    update: {},
+    create: { email: "jane.doe@example.com", fullName: "Jane Doe", active: true, ...employeeOverrides },
+    update: { ...employeeOverrides },
   });
   const record = {
     id: "rec-1",
@@ -177,5 +178,44 @@ describe("POST /dashboard/records/:id/link", () => {
     const res = await request(app).post(`/dashboard/records/${record.id}/link`);
     expect(res.status).toBe(302);
     expect(res.headers.location).toMatch(/^\/auth\/login/);
+  });
+});
+
+describe("GET /dashboard progress column", () => {
+  it("shows 1 of 1 for an employee who doesn't need a spouse form", async () => {
+    const prisma = createFakePrisma();
+    await seedEmployeeAndRecord(prisma, { receivedAt: new Date() });
+    const app = createApp(prisma as any, createFakeBlobStorage(), createFakeEmailSender());
+    const agent = request.agent(app);
+    await agent.post("/auth/login").type("form").send({ returnTo: "/dashboard" });
+
+    const res = await agent.get("/dashboard?year=2026");
+    expect(res.text).toContain("1 of 1");
+  });
+
+  it("shows 0 of 2 when a spouse form is needed and neither file has arrived", async () => {
+    const prisma = createFakePrisma();
+    await seedEmployeeAndRecord(prisma, {}, { needsSpouseForm: true });
+    const app = createApp(prisma as any, createFakeBlobStorage(), createFakeEmailSender());
+    const agent = request.agent(app);
+    await agent.post("/auth/login").type("form").send({ returnTo: "/dashboard" });
+
+    const res = await agent.get("/dashboard?year=2026");
+    expect(res.text).toContain("0 of 2");
+  });
+
+  it("shows 2 of 2 once both the employee's and spouse's forms have arrived", async () => {
+    const prisma = createFakePrisma();
+    await seedEmployeeAndRecord(
+      prisma,
+      { receivedAt: new Date(), spouseReceivedAt: new Date() },
+      { needsSpouseForm: true }
+    );
+    const app = createApp(prisma as any, createFakeBlobStorage(), createFakeEmailSender());
+    const agent = request.agent(app);
+    await agent.post("/auth/login").type("form").send({ returnTo: "/dashboard" });
+
+    const res = await agent.get("/dashboard?year=2026");
+    expect(res.text).toContain("2 of 2");
   });
 });

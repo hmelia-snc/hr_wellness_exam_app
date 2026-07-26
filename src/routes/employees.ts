@@ -3,23 +3,27 @@ import multer from "multer";
 import type { PrismaClient } from "@prisma/client";
 import { requireHrAuth } from "../lib/auth.js";
 import type { EmailSender } from "../lib/email/types.js";
-import { upsertEmployeeAndSendLink } from "../services/employeeActions.js";
+import type { BlobStorage } from "../lib/blobStorage.js";
+import { upsertEmployeeAndSendLink, deleteEmployee } from "../services/employeeActions.js";
 import { importCycle } from "../services/importCycle.js";
 import { renderEmployeesPage } from "../views/employeesPage.js";
 
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 5 * 1024 * 1024 } });
 
-function toEmployeeRows(employees: { id: string; fullName: string; email: string; employeeIdExternal: string | null; active: boolean }[]) {
+function toEmployeeRows(
+  employees: { id: string; fullName: string; email: string; employeeIdExternal: string | null; active: boolean; needsSpouseForm: boolean }[]
+) {
   return employees.map((e) => ({
     id: e.id,
     fullName: e.fullName,
     email: e.email,
     employeeIdExternal: e.employeeIdExternal,
     active: e.active,
+    needsSpouseForm: e.needsSpouseForm,
   }));
 }
 
-export function createEmployeesRouter(prisma: PrismaClient, emailSender: EmailSender): Router {
+export function createEmployeesRouter(prisma: PrismaClient, emailSender: EmailSender, blobStorage: BlobStorage): Router {
   const router = Router();
 
   router.get("/", requireHrAuth, async (req: Request, res: Response) => {
@@ -34,13 +38,14 @@ export function createEmployeesRouter(prisma: PrismaClient, emailSender: EmailSe
         defaultCycleYear: new Date().getFullYear(),
         employees: toEmployeeRows(employees),
         addResult,
+        deleted: req.query.deleted === "1",
       })
     );
   });
 
   router.post("/", requireHrAuth, async (req: Request, res: Response, next: NextFunction) => {
     try {
-      const { fullName, email, employeeIdExternal, cycleYear } = req.body ?? {};
+      const { fullName, email, employeeIdExternal, cycleYear, needsSpouseForm } = req.body ?? {};
       if (!fullName || !email || !cycleYear) {
         res.status(400).send("fullName, email, and cycleYear are required.");
         return;
@@ -50,6 +55,7 @@ export function createEmployeesRouter(prisma: PrismaClient, emailSender: EmailSe
         email,
         employeeIdExternal: employeeIdExternal || undefined,
         cycleYear: Number(cycleYear),
+        needsSpouseForm: Boolean(needsSpouseForm),
       });
       const added = !result.recordCreated ? "exists" : result.emailSent ? "added" : "added_email_failed";
       res.redirect(303, `/dashboard/employees?added=${added}`);
@@ -103,6 +109,29 @@ export function createEmployeesRouter(prisma: PrismaClient, emailSender: EmailSe
     try {
       await prisma.employee.update({ where: { id: req.params.id }, data: { active: true } });
       res.redirect(303, "/dashboard/employees");
+    } catch (err) {
+      next(err);
+    }
+  });
+
+  router.post("/:id/toggle-spouse-form", requireHrAuth, async (req: Request, res: Response, next: NextFunction) => {
+    try {
+      const employee = await prisma.employee.findUnique({ where: { id: req.params.id } });
+      if (!employee) {
+        res.status(404).send("Employee not found.");
+        return;
+      }
+      await prisma.employee.update({ where: { id: req.params.id }, data: { needsSpouseForm: !employee.needsSpouseForm } });
+      res.redirect(303, "/dashboard/employees");
+    } catch (err) {
+      next(err);
+    }
+  });
+
+  router.post("/:id/delete", requireHrAuth, async (req: Request, res: Response, next: NextFunction) => {
+    try {
+      await deleteEmployee(prisma, blobStorage, req.params.id);
+      res.redirect(303, "/dashboard/employees?deleted=1");
     } catch (err) {
       next(err);
     }

@@ -43,6 +43,7 @@ export async function importCycle(
       email: row.email,
       employeeIdExternal: row.employeeIdExternal,
       cycleYear: options.cycleYear,
+      needsSpouseForm: row.needsSpouseForm,
     });
 
     if (!result.recordCreated) {

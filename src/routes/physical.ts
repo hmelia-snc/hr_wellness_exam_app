@@ -2,7 +2,7 @@ import path from "node:path";
 import { randomUUID } from "node:crypto";
 import { Router, type Request, type Response, type NextFunction } from "express";
 import multer from "multer";
-import type { PrismaClient, PhysicalRecord } from "@prisma/client";
+import type { PrismaClient, PhysicalRecord, Employee } from "@prisma/client";
 import { validateToken } from "../lib/tokenValidation.js";
 import { renderPhysicalPage, renderBlockedPage, type PhysicalPageStatus } from "../views/physicalPage.js";
 import type { BlobStorage } from "../lib/blobStorage.js";
@@ -10,6 +10,7 @@ import { getEnv } from "../config/env.js";
 
 interface RequestWithRecord extends Request {
   physicalRecord?: PhysicalRecord;
+  employee?: Employee;
 }
 
 const FORM_FILES = {
@@ -63,6 +64,7 @@ export function createPhysicalRouter(prisma: PrismaClient, blobStorage: BlobStor
       return;
     }
     req.physicalRecord = result.record;
+    req.employee = result.employee;
     next();
   });
 
@@ -70,7 +72,12 @@ export function createPhysicalRouter(prisma: PrismaClient, blobStorage: BlobStor
     const record = req.physicalRecord!;
     const status = record.status as PhysicalPageStatus;
     const uploadedFile = record.uploadedContentType ? { contentType: record.uploadedContentType } : null;
-    res.send(renderPhysicalPage(req.params.token, status, uploadedFile));
+    res.send(
+      renderPhysicalPage(req.params.token, status, uploadedFile, {
+        needsSpouseForm: req.employee!.needsSpouseForm,
+        spouseReceived: Boolean(record.spouseReceivedAt),
+      })
+    );
   });
 
   router.get("/:token/download", (req: RequestWithRecord, res: Response) => {
@@ -97,32 +104,67 @@ export function createPhysicalRouter(prisma: PrismaClient, blobStorage: BlobStor
 
   router.post(
     "/:token/upload",
-    upload.single("form"),
+    upload.fields([
+      { name: "form", maxCount: 1 },
+      { name: "spouseForm", maxCount: 1 },
+    ]),
     async (req: RequestWithRecord, res: Response, next: NextFunction) => {
       try {
-        if (!req.file) {
+        const files = (req.files ?? {}) as Record<string, Express.Multer.File[] | undefined>;
+        const formFile = files.form?.[0];
+        const spouseFile = files.spouseForm?.[0];
+
+        if (!formFile && !spouseFile) {
           res.status(400).send("No file uploaded.");
           return;
         }
+
         const record = req.physicalRecord!;
-        const extension = ALLOWED_MIME_TYPES[req.file.mimetype] ?? "";
-        const blobPath = `uploads/${record.cycleYear}/${record.id}/${Date.now()}-${randomUUID()}${extension}`;
-        const uploadedFileUrl = await blobStorage.uploadForm(req.file.buffer, blobPath, req.file.mimetype);
+        const employee = req.employee!;
 
-        await prisma.physicalRecord.update({
-          where: { id: record.id },
-          data: {
-            uploadedFileUrl,
-            uploadedBlobPath: blobPath,
-            uploadedContentType: req.file.mimetype,
-            status: "received",
-            receivedAt: new Date(),
-          },
-        });
+        if (spouseFile && !employee.needsSpouseForm) {
+          res.status(400).send("This employee doesn't have a spouse form on file.");
+          return;
+        }
 
-        // Step 3 (verification job) hooks in here: queue an async check of
-        // signature/date fields, then transition to `completed` or `needs_review`.
-        console.log(`[upload] physicalRecord=${record.id} received, blob=${blobPath}`);
+        if (formFile) {
+          const extension = ALLOWED_MIME_TYPES[formFile.mimetype] ?? "";
+          const blobPath = `uploads/${record.cycleYear}/${record.id}/${Date.now()}-${randomUUID()}${extension}`;
+          const uploadedFileUrl = await blobStorage.uploadForm(formFile.buffer, blobPath, formFile.mimetype);
+
+          await prisma.physicalRecord.update({
+            where: { id: record.id },
+            data: {
+              uploadedFileUrl,
+              uploadedBlobPath: blobPath,
+              uploadedContentType: formFile.mimetype,
+              status: "received",
+              receivedAt: new Date(),
+            },
+          });
+
+          // Step 3 (verification job) hooks in here: queue an async check of
+          // signature/date fields, then transition to `completed` or `needs_review`.
+          console.log(`[upload] physicalRecord=${record.id} received, blob=${blobPath}`);
+        }
+
+        if (spouseFile) {
+          const extension = ALLOWED_MIME_TYPES[spouseFile.mimetype] ?? "";
+          const blobPath = `uploads/${record.cycleYear}/${record.id}/spouse-${Date.now()}-${randomUUID()}${extension}`;
+          const spouseUploadedFileUrl = await blobStorage.uploadForm(spouseFile.buffer, blobPath, spouseFile.mimetype);
+
+          await prisma.physicalRecord.update({
+            where: { id: record.id },
+            data: {
+              spouseUploadedFileUrl,
+              spouseUploadedBlobPath: blobPath,
+              spouseUploadedContentType: spouseFile.mimetype,
+              spouseReceivedAt: new Date(),
+            },
+          });
+
+          console.log(`[upload] physicalRecord=${record.id} spouse form received, blob=${blobPath}`);
+        }
 
         res.redirect(303, `/physical/${encodeURIComponent(req.params.token)}`);
       } catch (err) {

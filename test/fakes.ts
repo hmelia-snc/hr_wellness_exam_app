@@ -3,10 +3,13 @@ import type { EmailSender, PhysicalFormEmail } from "../src/lib/email/types.js";
 
 export function createFakeBlobStorage(): BlobStorage & {
   uploads: { blobPath: string; contentType: string; buffer: Buffer }[];
+  deleted: string[];
 } {
   const uploads: { blobPath: string; contentType: string; buffer: Buffer }[] = [];
+  const deleted: string[] = [];
   return {
     uploads,
+    deleted,
     async uploadForm(buffer, blobPath, contentType) {
       uploads.push({ blobPath, contentType, buffer });
       return `https://fake-blob.test/${blobPath}`;
@@ -15,6 +18,9 @@ export function createFakeBlobStorage(): BlobStorage & {
       const match = uploads.find((u) => u.blobPath === blobPath);
       if (!match) throw new Error(`no such blob: ${blobPath}`);
       return match.buffer;
+    },
+    async deleteForm(blobPath) {
+      deleted.push(blobPath);
     },
   };
 }

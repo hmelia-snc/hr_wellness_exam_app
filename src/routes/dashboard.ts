@@ -45,6 +45,8 @@ export function createDashboardRouter(prisma: PrismaClient, emailSender: EmailSe
           sentAt: record.sentAt,
           receivedAt: record.receivedAt,
           completedAt: record.completedAt,
+          needsSpouseForm: record.employee.needsSpouseForm,
+          spouseReceivedAt: record.spouseReceivedAt,
         })),
       })
     );

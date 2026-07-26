@@ -40,6 +40,12 @@ export function createFakePrisma() {
       async findMany() {
         return [...employeesByEmail.values()];
       },
+      async delete({ where }: any) {
+        const employee = [...employeesByEmail.entries()].find(([, e]) => e.id === where.id);
+        if (!employee) throw new Error(`fakePrisma.employee.delete: no employee with id ${where.id}`);
+        employeesByEmail.delete(employee[0]);
+        return employee[1];
+      },
     },
     physicalRecord: {
       async findUnique({ where }: any) {
@@ -69,6 +75,7 @@ export function createFakePrisma() {
         let results = physicalRecords.filter((r) => {
           if (where.cycleYear !== undefined && r.cycleYear !== where.cycleYear) return false;
           if (where.status !== undefined && r.status !== where.status) return false;
+          if (where.employeeId !== undefined && r.employeeId !== where.employeeId) return false;
           return true;
         });
         if (orderBy?.createdAt === "asc") {
@@ -83,6 +90,14 @@ export function createFakePrisma() {
           }));
         }
         return results;
+      },
+      async deleteMany({ where = {} }: any = {}) {
+        const toDelete = physicalRecords.filter((r) => where.employeeId === undefined || r.employeeId === where.employeeId);
+        for (const record of toDelete) {
+          const index = physicalRecords.indexOf(record);
+          if (index !== -1) physicalRecords.splice(index, 1);
+        }
+        return { count: toDelete.length };
       },
     },
     uploadBatch: {

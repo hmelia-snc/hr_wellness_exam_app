@@ -9,6 +9,7 @@ export interface EmployeeRow {
   email: string;
   employeeIdExternal: string | null;
   active: boolean;
+  needsSpouseForm: boolean;
 }
 
 export type AddResult = "added" | "exists" | "added_email_failed";
@@ -19,6 +20,7 @@ export interface EmployeesPageProps {
   employees: EmployeeRow[];
   addResult?: AddResult;
   importResult?: ImportCycleResult;
+  deleted?: boolean;
 }
 
 const EXTRA_STYLES = `
@@ -55,6 +57,19 @@ const EXTRA_STYLES = `
     cursor: pointer;
   }
   .small-button:hover { background: ${BRAND.red}; color: #fff; }
+  .delete-button {
+    font-family: 'Ubuntu', Arial, sans-serif;
+    font-size: 0.8rem;
+    padding: 0.25rem 0.6rem;
+    border-radius: 6px;
+    border: 1px solid ${BRAND.darkRed};
+    background: ${BRAND.darkRed};
+    color: #fff;
+    cursor: pointer;
+  }
+  .delete-button:hover { opacity: 0.85; }
+  .checkbox-field { display: flex; flex-direction: row !important; align-items: center; gap: 0.4rem; }
+  .checkbox-field label { white-space: nowrap; }
   .notice-success { background: #d9f2d9; color: #1e6b1e; border: 1px solid #a9d9a9; border-radius: 6px; padding: 0.6rem 1rem; }
   .notice-error { background: ${BRAND.redTint10}; color: ${BRAND.darkRed}; border: 1px solid ${BRAND.redTintBorder}; border-radius: 6px; padding: 0.6rem 1rem; }
   .row-errors { color: ${BRAND.darkRed}; }
@@ -101,19 +116,31 @@ export function renderEmployeesPage(props: EmployeesPageProps): string {
 
   const importNotice = props.importResult ? importResultSummary(props.importResult) : "";
 
+  const deletedNotice = props.deleted ? `<div class="notice-success">Employee deleted.</div>` : "";
+
   const rows = props.employees
     .map((e) => {
       const toggleAction = e.active ? "deactivate" : "reactivate";
       const toggleLabel = e.active ? "Deactivate" : "Reactivate";
+      const spouseToggleLabel = e.needsSpouseForm ? "Remove spouse form" : "Add spouse form";
+      const confirmMessage = `Permanently delete ${e.fullName}? This cannot be undone.`;
+      const confirmAttr = escapeHtml(JSON.stringify(confirmMessage));
       return `
     <tr>
       <td>${escapeHtml(e.fullName)}</td>
       <td>${escapeHtml(e.email)}</td>
       <td>${e.employeeIdExternal ? escapeHtml(e.employeeIdExternal) : "—"}</td>
       <td><span class="status-badge status-${e.active ? "active" : "inactive"}">${e.active ? "active" : "inactive"}</span></td>
+      <td>${e.needsSpouseForm ? "Yes" : "No"}</td>
       <td>
-        <form method="post" action="/dashboard/employees/${encodeURIComponent(e.id)}/${toggleAction}">
+        <form method="post" action="/dashboard/employees/${encodeURIComponent(e.id)}/${toggleAction}" style="display:inline">
           <button type="submit" class="small-button">${toggleLabel}</button>
+        </form>
+        <form method="post" action="/dashboard/employees/${encodeURIComponent(e.id)}/toggle-spouse-form" style="display:inline">
+          <button type="submit" class="small-button">${spouseToggleLabel}</button>
+        </form>
+        <form method="post" action="/dashboard/employees/${encodeURIComponent(e.id)}/delete" style="display:inline" onsubmit="return confirm(${confirmAttr})">
+          <button type="submit" class="delete-button">Delete</button>
         </form>
       </td>
     </tr>`;
@@ -129,6 +156,7 @@ export function renderEmployeesPage(props: EmployeesPageProps): string {
 
 ${addNotice}
 ${importNotice}
+${deletedNotice}
 
 <div class="card">
   <h2>Add an employee</h2>
@@ -138,6 +166,7 @@ ${importNotice}
       <div><label for="email">Email</label><input type="email" id="email" name="email" required /></div>
       <div><label for="employeeIdExternal">Employee ID (optional)</label><input type="text" id="employeeIdExternal" name="employeeIdExternal" /></div>
       <div><label for="cycleYear">Cycle year</label><input type="number" id="cycleYear" name="cycleYear" value="${props.defaultCycleYear}" required /></div>
+      <div class="checkbox-field"><input type="checkbox" id="needsSpouseForm" name="needsSpouseForm" value="1" /><label for="needsSpouseForm">Spouse also needs to complete a form</label></div>
       <div><button type="submit">Add</button></div>
     </div>
   </form>
@@ -156,9 +185,9 @@ ${importNotice}
 
 <table>
   <thead>
-    <tr><th>Name</th><th>Email</th><th>External ID</th><th>Status</th><th></th></tr>
+    <tr><th>Name</th><th>Email</th><th>External ID</th><th>Status</th><th>Spouse Form</th><th></th></tr>
   </thead>
-  <tbody>${rows || `<tr><td colspan="5">No employees yet.</td></tr>`}</tbody>
+  <tbody>${rows || `<tr><td colspan="6">No employees yet.</td></tr>`}</tbody>
 </table>
 `;
 

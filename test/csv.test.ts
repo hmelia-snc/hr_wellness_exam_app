@@ -45,4 +45,24 @@ describe("parseEmployeeCsv", () => {
     expect(rows).toEqual([{ fullName: "First", email: "dup@example.com", employeeIdExternal: undefined }]);
     expect(errors[0].message).toMatch(/Duplicate email/);
   });
+
+  it("leaves needsSpouseForm undefined when the column is absent", () => {
+    const csv = "full_name,email\nJane Doe,jane@example.com\n";
+    const { rows } = parseEmployeeCsv(csv);
+    expect(rows[0].needsSpouseForm).toBeUndefined();
+  });
+
+  it("parses needs_spouse_form as true for truthy values", () => {
+    const csv = "full_name,email,needs_spouse_form\nJane Doe,jane@example.com,yes\nJohn Smith,john@example.com,TRUE\n";
+    const { rows } = parseEmployeeCsv(csv);
+    expect(rows[0].needsSpouseForm).toBe(true);
+    expect(rows[1].needsSpouseForm).toBe(true);
+  });
+
+  it("parses needs_spouse_form as false for empty or falsy values", () => {
+    const csv = "full_name,email,needs_spouse_form\nJane Doe,jane@example.com,\nJohn Smith,john@example.com,no\n";
+    const { rows } = parseEmployeeCsv(csv);
+    expect(rows[0].needsSpouseForm).toBe(false);
+    expect(rows[1].needsSpouseForm).toBe(false);
+  });
 });

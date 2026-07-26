@@ -5,6 +5,7 @@ export interface EmployeeCsvRow {
   fullName: string;
   email: string;
   employeeIdExternal?: string;
+  needsSpouseForm?: boolean;
 }
 
 export interface CsvRowError {
@@ -23,7 +24,20 @@ const rawRowSchema = z.object({
   email: z.string().optional(),
   employee_id_external: z.string().optional(),
   employee_id: z.string().optional(),
+  needs_spouse_form: z.string().optional(),
 });
+
+const TRUTHY_VALUES = new Set(["true", "yes", "y", "1", "x"]);
+
+/**
+ * Column absent from the file entirely -> undefined (don't touch an existing
+ * value on re-import). Present but empty or a falsy word -> false. Anything
+ * else recognizable as truthy -> true.
+ */
+function parseNeedsSpouseForm(raw: string | undefined): boolean | undefined {
+  if (raw === undefined) return undefined;
+  return TRUTHY_VALUES.has(raw.trim().toLowerCase());
+}
 
 /**
  * Parses a CSV of employees. Accepts either "full_name" or "name", and
@@ -72,8 +86,9 @@ export function parseEmployeeCsv(csvContent: string): CsvParseResult {
 
     const employeeIdExternal =
       (parsed.data.employee_id_external || parsed.data.employee_id)?.trim() || undefined;
+    const needsSpouseForm = parseNeedsSpouseForm(parsed.data.needs_spouse_form);
 
-    rows.push({ fullName, email, employeeIdExternal });
+    rows.push({ fullName, email, employeeIdExternal, needsSpouseForm });
   });
 
   return { rows, errors };

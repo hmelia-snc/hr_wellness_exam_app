@@ -43,12 +43,37 @@ function renderPreviewColumn(safeToken: string, contentType: string): string {
 </div>`;
 }
 
+export interface SpouseFormInfo {
+  needsSpouseForm: boolean;
+  spouseReceived: boolean;
+}
+
+function spouseStatusLine(spouseReceived: boolean): string {
+  return spouseReceived
+    ? `<p class="notice">Spouse form: received — thank you!<br>Formulario del cónyuge: recibido — ¡gracias!</p>`
+    : `<p class="notice">Spouse form: not yet received.<br>Formulario del cónyuge: aún no recibido.</p>`;
+}
+
 export function renderPhysicalPage(
   token: string,
   status: PhysicalPageStatus,
-  uploadedFile: UploadedFileInfo | null = null
+  uploadedFile: UploadedFileInfo | null = null,
+  spouseForm: SpouseFormInfo | null = null
 ): string {
   const safeToken = encodeURIComponent(token);
+  const needsSpouseForm = spouseForm?.needsSpouseForm ?? false;
+
+  const employeeFileField = needsSpouseForm
+    ? `<label for="form">Your completed form / Su formulario completado</label>
+    <input type="file" id="form" name="form" accept=".pdf,.jpg,.jpeg,.png" />`
+    : `<label for="form">Completed form / Formulario completado</label>
+    <input type="file" id="form" name="form" accept=".pdf,.jpg,.jpeg,.png" required />`;
+
+  const spouseFileField = needsSpouseForm
+    ? `<label for="spouseForm">Spouse's completed form / Formulario completado del cónyuge</label>
+    <input type="file" id="spouseForm" name="spouseForm" accept=".pdf,.jpg,.jpeg,.png" />
+    ${spouseStatusLine(spouseForm!.spouseReceived)}`
+    : "";
 
   const mainColumn = `
 <div class="content-main">
@@ -64,8 +89,8 @@ ${statusNotice(status)}
 <section>
   <h2>2. Upload your completed form / Suba su formulario completado</h2>
   <form action="/physical/${safeToken}/upload" method="post" enctype="multipart/form-data">
-    <label for="form">Completed form / Formulario completado</label>
-    <input type="file" id="form" name="form" accept=".pdf,.jpg,.jpeg,.png" required />
+    ${employeeFileField}
+    ${spouseFileField}
     <div><button type="submit" style="margin-top: 1rem;">Upload / Subir</button></div>
   </form>
 </section>
