@@ -6,6 +6,8 @@ import type { PrismaClient, PhysicalRecord, Employee } from "@prisma/client";
 import { validateToken } from "../lib/tokenValidation.js";
 import { renderPhysicalPage, renderBlockedPage, type PhysicalPageStatus } from "../views/physicalPage.js";
 import type { BlobStorage } from "../lib/blobStorage.js";
+import type { FormVerifier } from "../lib/verification/types.js";
+import { verifyPhysicalRecord } from "../services/verifyRecord.js";
 import { getEnv } from "../config/env.js";
 
 interface RequestWithRecord extends Request {
@@ -30,7 +32,7 @@ const ALLOWED_MIME_TYPES: Record<string, string> = {
   "image/png": ".png",
 };
 
-export function createPhysicalRouter(prisma: PrismaClient, blobStorage: BlobStorage): Router {
+export function createPhysicalRouter(prisma: PrismaClient, blobStorage: BlobStorage, formVerifier?: FormVerifier): Router {
   const router = Router();
   const env = getEnv();
 
@@ -143,9 +145,20 @@ export function createPhysicalRouter(prisma: PrismaClient, blobStorage: BlobStor
             },
           });
 
-          // Step 3 (verification job) hooks in here: queue an async check of
-          // signature/date fields, then transition to `completed` or `needs_review`.
           console.log(`[upload] physicalRecord=${record.id} received, blob=${blobPath}`);
+
+          // Fire-and-forget: OCR verification can take several seconds for
+          // the real Azure verifier, and the employee shouldn't wait on it.
+          if (formVerifier) {
+            verifyPhysicalRecord(prisma, formVerifier, record.id, blobPath, formFile.buffer, formFile.mimetype).catch(
+              (err) => {
+                console.error(
+                  `[upload] verification kickoff failed for record=${record.id}:`,
+                  err instanceof Error ? err.message : err
+                );
+              }
+            );
+          }
         }
 
         if (spouseFile) {

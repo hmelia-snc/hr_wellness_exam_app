@@ -47,6 +47,7 @@ export function createDashboardRouter(prisma: PrismaClient, emailSender: EmailSe
           completedAt: record.completedAt,
           needsSpouseForm: record.employee.needsSpouseForm,
           spouseReceivedAt: record.spouseReceivedAt,
+          verificationResult: record.verificationResult,
         })),
       })
     );
@@ -56,6 +57,25 @@ export function createDashboardRouter(prisma: PrismaClient, emailSender: EmailSe
     try {
       const result = await resendLink(prisma, emailSender, req.params.id);
       res.redirect(303, backToDashboardHref(req, result.emailSent ? {} : { resendFailed: "1" }));
+    } catch (err) {
+      next(err);
+    }
+  });
+
+  router.post("/records/:id/approve", requireHrAuth, async (req: Request, res: Response, next: NextFunction) => {
+    try {
+      const hrEmail = req.session.hrUser!.email;
+      await prisma.physicalRecord.update({
+        where: { id: req.params.id },
+        data: {
+          status: "completed",
+          completedAt: new Date(),
+          reviewedBy: hrEmail,
+          reviewedAt: new Date(),
+          verificationResult: `Manually approved by ${hrEmail}.`,
+        },
+      });
+      res.redirect(303, backToDashboardHref(req));
     } catch (err) {
       next(err);
     }

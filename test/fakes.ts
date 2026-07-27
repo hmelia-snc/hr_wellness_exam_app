@@ -1,5 +1,6 @@
 import type { BlobStorage } from "../src/lib/blobStorage.js";
 import type { EmailSender, PhysicalFormEmail } from "../src/lib/email/types.js";
+import type { FormVerifier, VerificationResult } from "../src/lib/verification/types.js";
 
 export function createFakeBlobStorage(): BlobStorage & {
   uploads: { blobPath: string; contentType: string; buffer: Buffer }[];
@@ -21,6 +22,24 @@ export function createFakeBlobStorage(): BlobStorage & {
     },
     async deleteForm(blobPath) {
       deleted.push(blobPath);
+    },
+  };
+}
+
+export interface FakeFormVerifierOptions {
+  result?: VerificationResult;
+}
+
+export function createFakeFormVerifier(
+  options: FakeFormVerifierOptions = {}
+): FormVerifier & { calls: { buffer: Buffer; contentType: string }[] } {
+  const calls: { buffer: Buffer; contentType: string }[] = [];
+  const result = options.result ?? { passed: true, summary: "fake verifier: passed" };
+  return {
+    calls,
+    async verify(buffer, contentType) {
+      calls.push({ buffer, contentType });
+      return result;
     },
   };
 }

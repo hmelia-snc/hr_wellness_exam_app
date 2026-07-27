@@ -181,6 +181,55 @@ describe("POST /dashboard/records/:id/link", () => {
   });
 });
 
+describe("POST /dashboard/records/:id/approve", () => {
+  it("marks a needs_review record completed and stamps who reviewed it", async () => {
+    const prisma = createFakePrisma();
+    const { record } = await seedEmployeeAndRecord(prisma, {
+      status: "needs_review",
+      receivedAt: new Date(),
+      verificationResult: "No handwritten signature detected — needs manual review.",
+    });
+    const app = createApp(prisma as any, createFakeBlobStorage(), createFakeEmailSender());
+    const agent = request.agent(app);
+    await agent.post("/auth/login").type("form").send({ returnTo: "/dashboard" });
+
+    const res = await agent.post(`/dashboard/records/${record.id}/approve?year=2026`);
+    expect(res.status).toBe(303);
+    expect(res.headers.location).toBe("/dashboard?year=2026");
+
+    const updated = prisma._state.physicalRecords.find((r: any) => r.id === record.id);
+    expect(updated.status).toBe("completed");
+    expect(updated.completedAt).toBeInstanceOf(Date);
+    expect(updated.reviewedBy).toBe("dev-hr@standardnutrition.com");
+    expect(updated.reviewedAt).toBeInstanceOf(Date);
+  });
+
+  it("requires auth", async () => {
+    const prisma = createFakePrisma();
+    const { record } = await seedEmployeeAndRecord(prisma, { status: "needs_review" });
+    const app = createApp(prisma as any, createFakeBlobStorage(), createFakeEmailSender());
+
+    const res = await request(app).post(`/dashboard/records/${record.id}/approve`);
+    expect(res.status).toBe(302);
+    expect(res.headers.location).toMatch(/^\/auth\/login/);
+  });
+
+  it("shows an Approve button only for needs_review records, and a tooltip with the verification reason", async () => {
+    const prisma = createFakePrisma();
+    await seedEmployeeAndRecord(prisma, {
+      status: "needs_review",
+      verificationResult: "No handwritten signature detected — needs manual review.",
+    });
+    const app = createApp(prisma as any, createFakeBlobStorage(), createFakeEmailSender());
+    const agent = request.agent(app);
+    await agent.post("/auth/login").type("form").send({ returnTo: "/dashboard" });
+
+    const res = await agent.get("/dashboard?year=2026");
+    expect(res.text).toContain("/approve?");
+    expect(res.text).toContain('title="No handwritten signature detected');
+  });
+});
+
 describe("GET /dashboard progress column", () => {
   it("shows 1 of 1 for an employee who doesn't need a spouse form", async () => {
     const prisma = createFakePrisma();

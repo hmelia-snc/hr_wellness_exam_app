@@ -10,10 +10,16 @@ import { createDashboardRouter } from "./routes/dashboard.js";
 import { createEmployeesRouter } from "./routes/employees.js";
 import type { BlobStorage } from "./lib/blobStorage.js";
 import type { EmailSender } from "./lib/email/types.js";
+import type { FormVerifier } from "./lib/verification/types.js";
 import { getEnv } from "./config/env.js";
 import { renderHomePage } from "./views/homePage.js";
 
-export function createApp(prisma: PrismaClient, blobStorage: BlobStorage, emailSender: EmailSender) {
+export function createApp(
+  prisma: PrismaClient,
+  blobStorage: BlobStorage,
+  emailSender: EmailSender,
+  formVerifier?: FormVerifier
+) {
   const app = express();
   const env = getEnv();
 
@@ -55,7 +61,7 @@ export function createApp(prisma: PrismaClient, blobStorage: BlobStorage, emailS
     res.send(renderHomePage());
   });
 
-  app.use("/physical", physicalLimiter, createPhysicalRouter(prisma, blobStorage));
+  app.use("/physical", physicalLimiter, createPhysicalRouter(prisma, blobStorage, formVerifier));
   app.use("/auth", createAuthRouter());
   app.use("/dashboard", createDashboardRouter(prisma, emailSender));
   app.use("/dashboard/employees", createEmployeesRouter(prisma, emailSender, blobStorage));

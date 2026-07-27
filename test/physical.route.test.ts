@@ -5,7 +5,7 @@ import request from "supertest";
 import { createApp } from "../src/server.js";
 import { generateToken } from "../src/lib/token.js";
 import { createFakePrisma } from "./fakePrisma.js";
-import { createFakeBlobStorage, createFakeEmailSender } from "./fakes.js";
+import { createFakeBlobStorage, createFakeEmailSender, createFakeFormVerifier } from "./fakes.js";
 
 function daysFromNow(days: number): Date {
   const date = new Date();
@@ -171,6 +171,28 @@ describe("POST /physical/:token/upload", () => {
     expect(res.status).toBe(200);
     expect(res.text).toMatch(/already been completed/i);
     expect(blobStorage.uploads).toHaveLength(0);
+  });
+
+  it("kicks off verification without blocking the upload response, then transitions status once it resolves", async () => {
+    const prisma = createFakePrisma();
+    const { rawToken, record } = await seedRecord(prisma);
+    const blobStorage = createFakeBlobStorage();
+    const formVerifier = createFakeFormVerifier({ result: { passed: true, summary: "looks complete" } });
+    const app = createApp(prisma as any, blobStorage, createFakeEmailSender(), formVerifier);
+
+    const res = await request(app)
+      .post(`/physical/${rawToken}/upload`)
+      .attach("form", Buffer.from("%PDF-1.4 fake content"), { filename: "signed.pdf", contentType: "application/pdf" });
+
+    expect(res.status).toBe(303);
+    // The response above already came back — verification is fire-and-forget,
+    // so give its background promise chain a tick to land before asserting.
+    await new Promise((resolve) => setTimeout(resolve, 20));
+
+    expect(formVerifier.calls).toHaveLength(1);
+    const updated = prisma._state.physicalRecords.find((r: any) => r.id === record.id);
+    expect(updated.status).toBe("completed");
+    expect(updated.verificationResult).toBe("looks complete");
   });
 });
 

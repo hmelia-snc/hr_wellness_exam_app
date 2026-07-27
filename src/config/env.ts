@@ -23,6 +23,9 @@ const envSchema = z
     ENTRA_CLIENT_SECRET: z.string().optional(),
     ENTRA_REDIRECT_URI: z.string().optional(),
     HR_GROUP_OBJECT_ID: z.string().optional(),
+    VERIFICATION_MODE: z.enum(["mock", "azure"]).default("mock"),
+    DOCUMENT_INTELLIGENCE_ENDPOINT: z.string().optional(),
+    DOCUMENT_INTELLIGENCE_KEY: z.string().optional(),
   })
   .superRefine((env, ctx) => {
     if (env.EMAIL_MODE === "graph") {
@@ -42,6 +45,17 @@ const envSchema = z
           ctx.addIssue({
             code: z.ZodIssueCode.custom,
             message: `${key} is required when AUTH_MODE=entra`,
+            path: [key],
+          });
+        }
+      }
+    }
+    if (env.VERIFICATION_MODE === "azure") {
+      for (const key of ["DOCUMENT_INTELLIGENCE_ENDPOINT", "DOCUMENT_INTELLIGENCE_KEY"] as const) {
+        if (!env[key]) {
+          ctx.addIssue({
+            code: z.ZodIssueCode.custom,
+            message: `${key} is required when VERIFICATION_MODE=azure`,
             path: [key],
           });
         }

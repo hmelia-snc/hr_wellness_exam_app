@@ -23,9 +23,11 @@ Edit the variables at the top of the script first (resource group name,
 region, app name — several must be **globally unique** across all of Azure,
 the script has comments marking which). Creates: an App Service plan + Linux
 Node 20 web app, an Azure SQL logical server + database + firewall rule, a
-Storage account + private blob container, and sets most of the App Service
-Application Settings automatically (`DATABASE_URL`,
-`AZURE_STORAGE_CONNECTION_STRING`, `SESSION_SECRET`, etc. — all generated
+Storage account + private blob container, a Document Intelligence resource
+(OCR verification of uploaded forms, free F0 tier), and sets most of the App
+Service Application Settings automatically (`DATABASE_URL`,
+`AZURE_STORAGE_CONNECTION_STRING`, `SESSION_SECRET`,
+`DOCUMENT_INTELLIGENCE_ENDPOINT`/`KEY`, etc. — all generated or fetched
 locally, never written to disk or committed).
 
 It intentionally does **not** create the Entra ID app registrations (step 2)
@@ -138,6 +140,33 @@ Watch the Actions tab on GitHub for the run, then check
 `https://<APP_NAME>.azurewebsites.net/healthz` (should return `ok`) and
 `https://<APP_NAME>.azurewebsites.net/` (should show the home page with the
 HR Dashboard link).
+
+## OCR verification of uploaded forms
+
+Uploaded forms are automatically checked via Azure AI Document Intelligence
+(`VERIFICATION_MODE=azure`, set by the provisioning script): the employee's
+upload gets OCR'd with the prebuilt "read" model right after it lands, and
+the record auto-transitions to `completed` or `needs_review` based on two
+presence checks — is there enough readable text to not be a blank/corrupt
+scan, and is there detectable handwritten content (a proxy for "was this
+actually signed," not real signature verification). This runs
+fire-and-forget after the employee's upload request already got its
+response, so OCR latency (a few seconds) never makes them wait.
+
+This is v1 scope deliberately: presence checks, not per-field extraction
+(no validation that the *name* on the form matches the employee, or that the
+*date* falls in the right cycle year). False positives/negatives are
+expected — a `needs_review` record shows the reason as a tooltip on its
+status badge on the dashboard, and HR can resolve it with the **Approve**
+button (stamps `reviewedBy`/`reviewedAt` with the signed-in HR user) without
+needing to make the employee re-upload.
+
+Local dev defaults to `VERIFICATION_MODE=mock` (`src/lib/verification/mockVerifier.ts`):
+every upload auto-passes with no real OCR call, so the full dashboard flow
+still works without needing Document Intelligence credentials. Real Azure
+verification needs `DOCUMENT_INTELLIGENCE_ENDPOINT`/`DOCUMENT_INTELLIGENCE_KEY`,
+which the provisioning script generates automatically (F0 free tier: 500
+pages/month, well above what one company's annual physical cycle needs).
 
 ## Known limitations to revisit before real production traffic
 

@@ -13,6 +13,7 @@ export interface DashboardRecordRow {
   completedAt: Date | null;
   needsSpouseForm: boolean;
   spouseReceivedAt: Date | null;
+  verificationResult: string | null;
 }
 
 function progressLabel(r: Pick<DashboardRecordRow, "receivedAt" | "needsSpouseForm" | "spouseReceivedAt">): string {
@@ -90,7 +91,7 @@ export function renderDashboardPage(props: DashboardPageProps): string {
     <tr>
       <td>${escapeHtml(r.employeeName)}</td>
       <td>${escapeHtml(r.employeeEmail)}</td>
-      <td><span class="status-badge status-${escapeHtml(r.status)}">${escapeHtml(r.status)}</span></td>
+      <td><span class="status-badge status-${escapeHtml(r.status)}"${r.verificationResult ? ` title="${escapeHtml(r.verificationResult)}"` : ""}>${escapeHtml(r.status)}</span></td>
       <td>${progressLabel(r)}</td>
       <td>${formatDate(r.sentAt)}</td>
       <td>${formatDate(r.receivedAt)}</td>
@@ -105,6 +106,13 @@ export function renderDashboardPage(props: DashboardPageProps): string {
           <button type="submit" class="small-button">Get Link</button>
         </form>`
             : `<span class="inactive-note">Employee inactive</span>`
+        }
+        ${
+          r.status === "needs_review"
+            ? `<form method="post" action="/dashboard/records/${encodeURIComponent(r.id)}/approve?${resendQuery.toString()}">
+          <button type="submit" class="small-button">Approve</button>
+        </form>`
+            : ""
         }
       </td>
     </tr>`

@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # Provisions the Azure resources this app needs: App Service, Azure SQL,
-# Storage Account. Run once, from a machine with `az` installed and
+# Storage Account, and a Document Intelligence resource (OCR verification of
+# uploaded forms). Run once, from a machine with `az` installed and
 # `az login` already done. Not idempotent — re-running against the same
 # names will fail on the resources that already exist, which is fine for a
 # first-time setup.
@@ -28,6 +29,9 @@ SQL_SKU="Basic"                         # cost-conscious default; upgrade later 
 
 STORAGE_ACCOUNT_NAME="hrapp$(date +%s | tail -c 8)" # must be globally unique, lowercase alphanumeric, <=24 chars
 UPLOADS_CONTAINER_NAME="uploaded-forms"
+
+DOC_INTEL_NAME="hrapp-doc-intel-$(date +%s | tail -c 6)" # must be globally unique (used as a custom subdomain)
+DOC_INTEL_SKU="F0"                      # free tier: 500 pages/month, plenty for this app's volume
 
 MAIL_SENDER_ADDRESS="hr@standardnutrition.com"
 # --- End of editable variables ---
@@ -123,6 +127,29 @@ az storage container create \
   --public-access off \
   --output none
 
+echo "==> Registering Microsoft.CognitiveServices (idempotent; no-op if already registered)"
+az provider register --namespace Microsoft.CognitiveServices --wait
+
+echo "==> Document Intelligence ($DOC_INTEL_SKU, OCR verification of uploaded forms): $DOC_INTEL_NAME"
+az cognitiveservices account create \
+  --name "$DOC_INTEL_NAME" \
+  --resource-group "$RESOURCE_GROUP" \
+  --kind FormRecognizer \
+  --sku "$DOC_INTEL_SKU" \
+  --location "$LOCATION" \
+  --custom-domain "$DOC_INTEL_NAME" \
+  --yes \
+  --output none
+
+DOC_INTEL_ENDPOINT="$(az cognitiveservices account show \
+  --name "$DOC_INTEL_NAME" \
+  --resource-group "$RESOURCE_GROUP" \
+  --query properties.endpoint -o tsv)"
+DOC_INTEL_KEY="$(az cognitiveservices account keys list \
+  --name "$DOC_INTEL_NAME" \
+  --resource-group "$RESOURCE_GROUP" \
+  --query key1 -o tsv)"
+
 DATABASE_URL="sqlserver://${SQL_SERVER_NAME}.database.windows.net:1433;database=${SQL_DATABASE_NAME};user=${SQL_ADMIN_USER};password=${SQL_ADMIN_PASSWORD};encrypt=true;trustServerCertificate=false;"
 APP_BASE_URL="https://${APP_NAME}.azurewebsites.net"
 
@@ -142,6 +169,9 @@ az webapp config appsettings set \
     DATABASE_URL="$DATABASE_URL" \
     AZURE_STORAGE_CONNECTION_STRING="$STORAGE_CONNECTION_STRING" \
     SESSION_SECRET="$SESSION_SECRET" \
+    VERIFICATION_MODE=azure \
+    DOCUMENT_INTELLIGENCE_ENDPOINT="$DOC_INTEL_ENDPOINT" \
+    DOCUMENT_INTELLIGENCE_KEY="$DOC_INTEL_KEY" \
     SCM_DO_BUILD_DURING_DEPLOYMENT=true \
     NPM_CONFIG_PRODUCTION=false \
   --output none
@@ -156,6 +186,9 @@ echo "   appsettings set):"
 echo "     AZURE_TENANT_ID, AZURE_CLIENT_ID, AZURE_CLIENT_SECRET   (Graph mail-send app)"
 echo "     ENTRA_TENANT_ID, ENTRA_CLIENT_ID, ENTRA_CLIENT_SECRET   (dashboard SSO app)"
 echo "     ENTRA_REDIRECT_URI = ${APP_BASE_URL}/auth/callback"
+echo ""
+echo "   (VERIFICATION_MODE=azure and the Document Intelligence endpoint/key"
+echo "   were already set above — uploaded forms get OCR-verified automatically.)"
 echo ""
 echo "2. For GitHub Actions deployment, get the publish profile:"
 echo "     az webapp deployment list-publishing-profiles --name $APP_NAME \\"
