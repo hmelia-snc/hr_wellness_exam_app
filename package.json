@@ -10,7 +10,7 @@
     "postinstall": "prisma generate",
     "build": "tsc -p tsconfig.build.json",
     "dev": "tsx watch src/scripts/startServer.ts",
-    "start": "prisma migrate deploy && node dist/scripts/startServer.js",
+    "start": "bash deploy/start.sh",
     "import-cycle": "tsx src/scripts/importCycle.ts",
     "test": "vitest run",
     "prisma:generate": "prisma generate",

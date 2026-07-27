@@ -262,6 +262,26 @@ links are in circulation**, keep the old App Service running (as described
 above) until `TOKEN_EXPIRY_DAYS` (30 days by default) has fully elapsed for
 every record sent under the old link, rather than deleting it right away.
 
+## Startup retries around `prisma migrate deploy`
+
+Observed on the new App Service right after the URL migration: a fresh
+container's first outbound TLS connection to Azure SQL intermittently
+failed (`P1011: Error opening a TLS connection ... Connection reset by
+peer`) in the first moment or two after the container's networking came
+up. `prisma migrate deploy` doesn't retry on its own, so this crashed the
+whole container — and since the crash happened *during* startup, Azure's
+only recovery path was recreating the container from scratch, which took
+100+ seconds each time and looked like the site was down/unresponsive.
+
+`npm start` now runs `deploy/start.sh` instead of `prisma migrate deploy`
+directly: up to 5 attempts with a 5s delay between them, before finally
+starting the server. This is not a workaround for a misconfigured
+connection string — `encrypt=true;trustServerCertificate=false` is the
+correct, secure setting, and loosening it would trade security for masking
+a timing race. It's specifically retrying past a narrow cold-start window
+that resolves on its own within a few seconds, which is far cheaper than
+waiting out a full container recreation for the same outcome.
+
 ## Known limitations to revisit before real production traffic
 
 - **Session store is in-memory** (`express-session`'s default). Fine for one
