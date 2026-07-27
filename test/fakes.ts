@@ -1,5 +1,5 @@
 import type { BlobStorage } from "../src/lib/blobStorage.js";
-import type { EmailSender, PhysicalFormEmail } from "../src/lib/email/types.js";
+import type { EmailSender, PhysicalFormEmail, UploadConfirmationEmail } from "../src/lib/email/types.js";
 import type { FormVerifier, VerificationResult } from "../src/lib/verification/types.js";
 
 export function createFakeBlobStorage(): BlobStorage & {
@@ -48,15 +48,25 @@ export interface FakeEmailSenderOptions {
   failFor?: Set<string>;
 }
 
-export function createFakeEmailSender(options: FakeEmailSenderOptions = {}): EmailSender & { sent: PhysicalFormEmail[] } {
+export function createFakeEmailSender(
+  options: FakeEmailSenderOptions = {}
+): EmailSender & { sent: PhysicalFormEmail[]; confirmationsSent: UploadConfirmationEmail[] } {
   const sent: PhysicalFormEmail[] = [];
+  const confirmationsSent: UploadConfirmationEmail[] = [];
   return {
     sent,
+    confirmationsSent,
     async send(email) {
       if (options.failFor?.has(email.toEmail)) {
         throw new Error("simulated send failure");
       }
       sent.push(email);
+    },
+    async sendUploadConfirmation(email) {
+      if (options.failFor?.has(email.toEmail)) {
+        throw new Error("simulated send failure");
+      }
+      confirmationsSent.push(email);
     },
   };
 }

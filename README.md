@@ -1,14 +1,14 @@
 # HR Annual Physical Form Tracker
 
 **Status: v1.0.0-beta.1** — deployed and running on Azure App Service
-(`hr-physical-tracker`), with real Entra ID app registrations wired up for
-both mail-send and dashboard SSO. Still a beta: verification (step 3) isn't
-built, and the deployment path (Azure resource provisioning, App Service
-config quirks) has only been exercised once.
+(`snc-wellness-exam-verification`; migrated from `hr-physical-tracker` — see
+"URL/hostname migration" in DEPLOYMENT.md), with real Entra ID app
+registrations wired up for both mail-send and dashboard SSO. Employee-facing
+wording and URLs say "Wellness Exam Verification," matching the actual form.
 
 Build order from the spec:
 - **Step 1:** data model, CSV import, token generation, email send (status → `sent`)
-- **Step 2:** the employee-facing `/physical/{token}` page — pick a language,
+- **Step 2:** the employee-facing `/wellness-exam/{token}` page — pick a language,
   download the blank form, upload the completed one (no name/email re-entry
   needed — the unique token is the identity), status → `received`. Once
   uploaded, the document previews inline next to the form.
@@ -72,15 +72,15 @@ raw token — use one of those to try the step 2 page below.
 npm run dev
 ```
 
-Serves `http://localhost:3000/physical/{token}`. The page:
+Serves `http://localhost:3000/wellness-exam/{token}`. The page:
 - always offers both form languages for download
-  (`GET /physical/{token}/download?lang=en|es`, streamed from
+  (`GET /wellness-exam/{token}/download?lang=en|es`, streamed from
   `assets/forms/wellness-exam-{en,es}.pdf`)
-- accepts an upload (`POST /physical/{token}/upload`, field name `form`;
+- accepts an upload (`POST /wellness-exam/{token}/upload`, field name `form`;
   PDF/JPG/PNG, capped at `MAX_UPLOAD_MB`) — no name/email re-entry needed,
   since the unique token itself is the identity
 - once uploaded, previews the document inline next to the form
-  (`GET /physical/{token}/uploaded-file` — `<img>` for JPG/PNG, the browser's
+  (`GET /wellness-exam/{token}/uploaded-file` — `<img>` for JPG/PNG, the browser's
   native PDF viewer via `<iframe>` for PDFs)
 - shows a blocked page (no download/upload) once `status = 'completed'`, or
   once the token is past `tokenExpiresAt`
@@ -122,7 +122,7 @@ npm test
 ```
 
 47 tests across token generation/hashing, CSV parsing, the import service's
-orchestration + idempotency, token validation, the `/physical/*` routes, and
+orchestration + idempotency, token validation, the `/wellness-exam/*` routes, and
 the `/dashboard` + `/auth` routes (via `supertest` against the Express app
 with a fake Prisma client and a fake blob storage backend) — none require a
 live database, SQL Server, or Azurite.
@@ -215,7 +215,7 @@ variants also covered in the guidelines document):
   path-traversal/injection surface from a user-supplied filename, and keeps
   the employee's local filename out of storage paths.
 - **`router.param("token", ...)` centralizes token validation** for all
-  `/physical/:token*` routes in one place (`src/routes/physical.ts`), and runs
+  `/wellness-exam/:token*` routes in one place (`src/routes/physical.ts`), and runs
   before `multer` parses an upload body — so an invalid/expired/completed
   token is rejected without buffering a file into memory first.
 - **Upload allowed pre-`completed`:** an employee can re-upload while status

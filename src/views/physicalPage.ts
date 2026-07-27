@@ -32,7 +32,7 @@ function statusNotice(status: PhysicalPageStatus): string {
 }
 
 function renderPreviewColumn(safeToken: string, contentType: string): string {
-  const previewUrl = `/physical/${safeToken}/uploaded-file`;
+  const previewUrl = `/wellness-exam/${safeToken}/uploaded-file`;
   const viewer = contentType.startsWith("image/")
     ? `<img class="preview-image" src="${previewUrl}" alt="Uploaded form" />`
     : `<iframe class="preview-frame" src="${previewUrl}" title="Uploaded form"></iframe>`;
@@ -77,18 +77,18 @@ export function renderPhysicalPage(
 
   const mainColumn = `
 <div class="content-main">
-<h1>Annual Physical Exam Form / Formulario de Examen Físico Anual</h1>
+<h1>Wellness Exam Verification / Verificación del Examen de Bienestar</h1>
 ${statusNotice(status)}
 <section>
   <h2>1. Download the blank form / Descargue el formulario en blanco</h2>
   <div class="downloads">
-    <a class="button" href="/physical/${safeToken}/download?lang=en">Download (English)</a>
-    <a class="button" href="/physical/${safeToken}/download?lang=es">Descargar (Español)</a>
+    <a class="button" href="/wellness-exam/${safeToken}/download?lang=en">Download (English)</a>
+    <a class="button" href="/wellness-exam/${safeToken}/download?lang=es">Descargar (Español)</a>
   </div>
 </section>
 <section>
   <h2>2. Upload your completed form / Suba su formulario completado</h2>
-  <form action="/physical/${safeToken}/upload" method="post" enctype="multipart/form-data">
+  <form action="/wellness-exam/${safeToken}/upload" method="post" enctype="multipart/form-data">
     ${employeeFileField}
     ${spouseFileField}
     <div><button type="submit" style="margin-top: 1rem;">Upload / Subir</button></div>
@@ -100,7 +100,7 @@ ${statusNotice(status)}
     uploadedFile ? renderPreviewColumn(safeToken, uploadedFile.contentType) : ""
   }</div>`;
 
-  return renderLayout("Annual Physical Form", body, {
+  return renderLayout("Wellness Exam Verification", body, {
     wide: Boolean(uploadedFile),
     extraStyles: EXTRA_STYLES,
   });

@@ -200,7 +200,7 @@ describe("POST /dashboard/records/:id/link", () => {
     const res = await agent.post(`/dashboard/records/${record.id}/link?year=2026&status=needs_review`);
     expect(res.status).toBe(200);
     expect(res.text).toContain("Jane Doe");
-    expect(res.text).toMatch(/\/physical\/[\w-]+/);
+    expect(res.text).toMatch(/\/wellness-exam\/[\w-]+/);
     expect(res.text).toContain('href="/dashboard?year=2026&status=needs_review"');
 
     const updated = prisma._state.physicalRecords.find((r: any) => r.id === record.id);

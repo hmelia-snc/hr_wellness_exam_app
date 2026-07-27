@@ -70,7 +70,7 @@ export async function upsertEmployeeAndSendLink(
     },
   });
 
-  const link = `${env.APP_BASE_URL}/physical/${rawToken}`;
+  const link = `${env.APP_BASE_URL}/wellness-exam/${rawToken}`;
   try {
     await emailSender.send({
       toEmail: employee.email,
@@ -156,7 +156,7 @@ export async function resendLink(
   const env = getEnv();
   const { rawToken, cycleYear, employee } = await resetRecordWithFreshToken(prisma, physicalRecordId);
 
-  const link = `${env.APP_BASE_URL}/physical/${rawToken}`;
+  const link = `${env.APP_BASE_URL}/wellness-exam/${rawToken}`;
   try {
     await emailSender.send({ toEmail: employee.email, toName: employee.fullName, link, cycleYear });
     await prisma.physicalRecord.update({ where: { id: physicalRecordId }, data: { sentAt: new Date() } });
@@ -188,7 +188,7 @@ export async function generateShareableLink(
   const env = getEnv();
   const { rawToken, cycleYear, employee } = await resetRecordWithFreshToken(prisma, physicalRecordId);
   return {
-    link: `${env.APP_BASE_URL}/physical/${rawToken}`,
+    link: `${env.APP_BASE_URL}/wellness-exam/${rawToken}`,
     employeeName: employee.fullName,
     employeeEmail: employee.email,
     cycleYear,

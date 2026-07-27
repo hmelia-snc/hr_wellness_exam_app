@@ -18,7 +18,7 @@ set -euo pipefail
 # --- Edit these before running ---
 RESOURCE_GROUP="hrapp-rg"
 LOCATION="centralus"
-APP_NAME="hr-physical-tracker"          # must be globally unique (becomes <APP_NAME>.azurewebsites.net)
+APP_NAME="snc-wellness-exam-verification" # must be globally unique (becomes <APP_NAME>.azurewebsites.net)
 APP_SERVICE_PLAN="hrapp-plan"
 APP_SERVICE_SKU="B1"                    # cost-conscious default; upgrade later if needed
 

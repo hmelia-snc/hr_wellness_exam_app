@@ -1,7 +1,13 @@
 # Deploying to Azure
 
 This has been run end-to-end against a real Azure subscription
-(`hr-physical-tracker.azurewebsites.net`, `centralus`) and is live. A few
+(`snc-wellness-exam-verification.azurewebsites.net`, `centralus`) and is
+live. (Originally provisioned as `hr-physical-tracker.azurewebsites.net`;
+migrated to a new App Service on the same plan/database/storage so no
+employee-facing wording says "physical tracker" — see "URL/hostname
+migration" below. The old hostname is being kept running, frozen at its
+last deployed build, purely so any already-issued-but-unused links from
+before the migration keep working until they expire.) A few
 real issues turned up along the way that aren't obvious from the docs —
 see "Known limitations" at the bottom, and the provisioning script/workflow
 already reflect the fixes (Node runtime version, Basic Auth publishing
@@ -41,7 +47,7 @@ below, or two separate ones — separate is cleaner if different people manage
 "can send mail as HR" vs. "can sign in to the dashboard."
 
 **A. Graph mail-send app** (Entra ID → App registrations → New registration):
-1. Register the app (any name, e.g. "HR Physical Tracker — Mail").
+1. Register the app (any name, e.g. "HR Wellness Exam Verification — Mail").
 2. API permissions → Add → Microsoft Graph → **Application permissions** →
    `Mail.Send` → Add, then **Grant admin consent** (needs a tenant admin).
 3. Certificates & secrets → New client secret → copy the value immediately.
@@ -49,7 +55,7 @@ below, or two separate ones — separate is cleaner if different people manage
    `AZURE_CLIENT_SECRET` from this registration.
 
 **B. Dashboard SSO app:**
-1. Register the app (e.g. "HR Physical Tracker — Dashboard").
+1. Register the app (e.g. "HR Wellness Exam Verification — Dashboard").
 2. Authentication → Add a platform → Web → redirect URI:
    `https://<APP_NAME>.azurewebsites.net/auth/callback` (the exact value the
    provisioning script printed as `ENTRA_REDIRECT_URI`).
@@ -190,7 +196,7 @@ pages/month, well above what one company's annual physical cycle needs).
 
 Every time an uploaded form is viewed — HR opening it from the dashboard's
 **View file**/**View spouse file** links, or the employee viewing their own
-upload on their `/physical/:token` page — a row is written to the
+upload on their `/wellness-exam/:token` page — a row is written to the
 `file_access_logs` table (`src/services/fileAccessLog.ts`): who viewed it
 and when. There's no UI to browse this yet; query the table directly if an
 audit trail is ever needed. It's deliberately not foreign-keyed to
@@ -211,6 +217,46 @@ never grow past it. Every "wide" page (the HR dashboard, Manage Employees)
 had been silently rendering at 640px this whole time. Fixed by moving the
 width/centering styles from `body` onto `main` directly
 (`src/views/layout.ts`).
+
+## URL/hostname migration: hr-physical-tracker → snc-wellness-exam-verification
+
+All employee-facing wording ("Physical"/"Physical Tracker") was renamed to
+"Wellness Exam Verification" — matching the actual printed heading on
+`assets/forms/wellness-exam-{en,es}.pdf` — in emails, the employee upload
+page, and the home page. Since that text also showed up in the App
+Service's own hostname, the app was migrated to a new App Service:
+
+- **New**: `snc-wellness-exam-verification.azurewebsites.net`
+- **Old**: `hr-physical-tracker.azurewebsites.net` (kept running, frozen at
+  its last deployed build — not decommissioned)
+
+Azure App Service names are permanent once created and globally unique
+across all of Azure, so this wasn't an in-place rename — it was: provision
+a new App Service on the **same** App Service Plan (`hrapp-plan`), copy
+every app setting across (`APP_BASE_URL`/`ENTRA_REDIRECT_URI` updated to
+the new hostname, everything else — `DATABASE_URL`,
+`AZURE_STORAGE_CONNECTION_STRING`, Document Intelligence/Graph
+credentials — copied as-is so both apps share the same data), add the new
+hostname's `/auth/callback` and `/auth/login` as additional redirect URIs
+on the Entra dashboard SSO app registration (alongside the old ones, not
+replacing them), and repoint the GitHub Actions `AZURE_WEBAPP_NAME`
+variable and `AZURE_WEBAPP_PUBLISH_PROFILE` secret at the new app.
+
+The employee-facing route path also changed, from `/physical/:token` to
+`/wellness-exam/:token`, so no part of an emailed link says "physical"
+either.
+
+**The old App Service was deliberately left running, not stopped or
+deleted.** Any physical-form link already emailed before this migration
+still points at the old hostname and the old `/physical/:token` path —
+since both apps share the same database, those old links keep working
+against the old app's still-deployed (pre-rename) build until they
+naturally expire (`TOKEN_EXPIRY_DAYS`, 30 days by default). Once you're
+confident no old links are still outstanding, the old App Service
+(`hr-physical-tracker`) can be stopped or deleted — that's a deliberate
+manual step, not automated here, since deleting a resource other software
+depends on is exactly the kind of action that shouldn't happen without an
+explicit go-ahead.
 
 ## Known limitations to revisit before real production traffic
 
@@ -258,7 +304,7 @@ width/centering styles from `body` onto `main` directly
   --resource-group <RESOURCE_GROUP> --always-on true` once.
 
 This has been deployed and verified against real Azure: App Service is live
-at `hr-physical-tracker.azurewebsites.net`, both Entra app registrations
+at `snc-wellness-exam-verification.azurewebsites.net`, both Entra app registrations
 (mail-send and dashboard SSO) exist and work, `prisma migrate deploy` has
 applied real migrations against production Azure SQL, and the dashboard/auth
 flow has been exercised end-to-end there — including a real Graph email

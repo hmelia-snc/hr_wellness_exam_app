@@ -61,7 +61,7 @@ export function createApp(
     res.send(renderHomePage());
   });
 
-  app.use("/physical", physicalLimiter, createPhysicalRouter(prisma, blobStorage, formVerifier));
+  app.use("/wellness-exam", physicalLimiter, createPhysicalRouter(prisma, blobStorage, emailSender, formVerifier));
   app.use("/auth", createAuthRouter());
   app.use("/dashboard", createDashboardRouter(prisma, emailSender, blobStorage));
   app.use("/dashboard/employees", createEmployeesRouter(prisma, emailSender, blobStorage));

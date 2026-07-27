@@ -6,6 +6,7 @@ import type { PrismaClient, PhysicalRecord, Employee } from "@prisma/client";
 import { validateToken } from "../lib/tokenValidation.js";
 import { renderPhysicalPage, renderBlockedPage, type PhysicalPageStatus } from "../views/physicalPage.js";
 import type { BlobStorage } from "../lib/blobStorage.js";
+import type { EmailSender } from "../lib/email/types.js";
 import type { FormVerifier } from "../lib/verification/types.js";
 import { verifyPhysicalRecord } from "../services/verifyRecord.js";
 import { recordFileAccess } from "../services/fileAccessLog.js";
@@ -33,7 +34,12 @@ const ALLOWED_MIME_TYPES: Record<string, string> = {
   "image/png": ".png",
 };
 
-export function createPhysicalRouter(prisma: PrismaClient, blobStorage: BlobStorage, formVerifier?: FormVerifier): Router {
+export function createPhysicalRouter(
+  prisma: PrismaClient,
+  blobStorage: BlobStorage,
+  emailSender: EmailSender,
+  formVerifier?: FormVerifier
+): Router {
   const router = Router();
   const env = getEnv();
 
@@ -131,6 +137,15 @@ export function createPhysicalRouter(prisma: PrismaClient, blobStorage: BlobStor
           return;
         }
 
+        // Computed once up front so both confirmation emails below agree on
+        // whether the cycle is now fully satisfied — a form present in
+        // *this* request counts as done even though the DB update for it
+        // hasn't landed yet at this point in the handler.
+        const employeeFormDone = Boolean(formFile) || Boolean(record.receivedAt);
+        const spouseFormDone = !employee.needsSpouseForm || Boolean(spouseFile) || Boolean(record.spouseReceivedAt);
+        const isComplete = employeeFormDone && spouseFormDone;
+        const uploadPageLink = `${env.APP_BASE_URL}/wellness-exam/${encodeURIComponent(req.params.token)}`;
+
         if (formFile) {
           const extension = ALLOWED_MIME_TYPES[formFile.mimetype] ?? "";
           const blobPath = `uploads/${record.cycleYear}/${record.id}/${Date.now()}-${randomUUID()}${extension}`;
@@ -161,6 +176,24 @@ export function createPhysicalRouter(prisma: PrismaClient, blobStorage: BlobStor
               }
             );
           }
+
+          // Fire-and-forget, same reasoning: a slow/failed confirmation
+          // email shouldn't hold up or fail the employee's upload response.
+          emailSender
+            .sendUploadConfirmation({
+              toEmail: employee.email,
+              toName: employee.fullName,
+              cycleYear: record.cycleYear,
+              submitterRole: "employee",
+              isComplete,
+              link: uploadPageLink,
+            })
+            .catch((err) => {
+              console.error(
+                `[upload] confirmation email failed for record=${record.id}:`,
+                err instanceof Error ? err.message : err
+              );
+            });
         }
 
         if (spouseFile) {
@@ -179,9 +212,25 @@ export function createPhysicalRouter(prisma: PrismaClient, blobStorage: BlobStor
           });
 
           console.log(`[upload] physicalRecord=${record.id} spouse form received, blob=${blobPath}`);
+
+          emailSender
+            .sendUploadConfirmation({
+              toEmail: employee.email,
+              toName: employee.fullName,
+              cycleYear: record.cycleYear,
+              submitterRole: "spouse",
+              isComplete,
+              link: uploadPageLink,
+            })
+            .catch((err) => {
+              console.error(
+                `[upload] spouse confirmation email failed for record=${record.id}:`,
+                err instanceof Error ? err.message : err
+              );
+            });
         }
 
-        res.redirect(303, `/physical/${encodeURIComponent(req.params.token)}`);
+        res.redirect(303, `/wellness-exam/${encodeURIComponent(req.params.token)}`);
       } catch (err) {
         next(err);
       }

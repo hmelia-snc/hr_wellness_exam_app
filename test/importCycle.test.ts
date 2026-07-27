@@ -1,20 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { importCycle } from "../src/services/importCycle.js";
 import { createFakePrisma } from "./fakePrisma.js";
-import type { EmailSender, PhysicalFormEmail } from "../src/lib/email/types.js";
-
-function fakeEmailSender(opts: { failFor?: Set<string> } = {}): EmailSender & { sent: PhysicalFormEmail[] } {
-  const sent: PhysicalFormEmail[] = [];
-  return {
-    sent,
-    async send(email) {
-      if (opts.failFor?.has(email.toEmail)) {
-        throw new Error("simulated send failure");
-      }
-      sent.push(email);
-    },
-  };
-}
+import { createFakeEmailSender as fakeEmailSender } from "./fakes.js";
 
 const CSV = "full_name,email\nJane Doe,jane@example.com\nJohn Smith,john@example.com\n";
 
