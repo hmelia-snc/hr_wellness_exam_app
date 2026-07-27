@@ -29,6 +29,13 @@ model PhysicalRecord {
   employeeId         String
   cycleYear          Int
   tokenHash          String    @unique
+  // Plain-text copy of the same token tokenHash is derived from, so HR's
+  // "Get Link" action can show the employee's existing link back to them
+  // instead of generating (and thereby invalidating) a new one. Null for
+  // records created before this field existed, or after resendLink
+  // regenerates the token without also going through the reset helper below
+  // — resolved by falling back to a fresh token in that case too.
+  rawToken           String?
   tokenExpiresAt     DateTime
   status             String    @default("sent")
   sentAt             DateTime?
@@ -42,6 +49,7 @@ model PhysicalRecord {
   spouseUploadedContentType String?
   spouseReceivedAt   DateTime?
   verificationResult String?
+  rejectionReason    String?
   reviewedBy         String?
   reviewedAt         DateTime?
   createdAt          DateTime  @default(now())

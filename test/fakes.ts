@@ -1,5 +1,5 @@
 import type { BlobStorage } from "../src/lib/blobStorage.js";
-import type { EmailSender, PhysicalFormEmail, UploadConfirmationEmail } from "../src/lib/email/types.js";
+import type { EmailSender, PhysicalFormEmail, UploadConfirmationEmail, RejectionEmail } from "../src/lib/email/types.js";
 import type { FormVerifier, VerificationResult } from "../src/lib/verification/types.js";
 
 export function createFakeBlobStorage(): BlobStorage & {
@@ -32,13 +32,13 @@ export interface FakeFormVerifierOptions {
 
 export function createFakeFormVerifier(
   options: FakeFormVerifierOptions = {}
-): FormVerifier & { calls: { buffer: Buffer; contentType: string }[] } {
-  const calls: { buffer: Buffer; contentType: string }[] = [];
+): FormVerifier & { calls: { buffer: Buffer; contentType: string; cycleYear: number }[] } {
+  const calls: { buffer: Buffer; contentType: string; cycleYear: number }[] = [];
   const result = options.result ?? { passed: true, summary: "fake verifier: passed" };
   return {
     calls,
-    async verify(buffer, contentType) {
-      calls.push({ buffer, contentType });
+    async verify(buffer, contentType, cycleYear) {
+      calls.push({ buffer, contentType, cycleYear });
       return result;
     },
   };
@@ -50,12 +50,18 @@ export interface FakeEmailSenderOptions {
 
 export function createFakeEmailSender(
   options: FakeEmailSenderOptions = {}
-): EmailSender & { sent: PhysicalFormEmail[]; confirmationsSent: UploadConfirmationEmail[] } {
+): EmailSender & {
+  sent: PhysicalFormEmail[];
+  confirmationsSent: UploadConfirmationEmail[];
+  rejectionsSent: RejectionEmail[];
+} {
   const sent: PhysicalFormEmail[] = [];
   const confirmationsSent: UploadConfirmationEmail[] = [];
+  const rejectionsSent: RejectionEmail[] = [];
   return {
     sent,
     confirmationsSent,
+    rejectionsSent,
     async send(email) {
       if (options.failFor?.has(email.toEmail)) {
         throw new Error("simulated send failure");
@@ -67,6 +73,12 @@ export function createFakeEmailSender(
         throw new Error("simulated send failure");
       }
       confirmationsSent.push(email);
+    },
+    async sendRejection(email) {
+      if (options.failFor?.has(email.toEmail)) {
+        throw new Error("simulated send failure");
+      }
+      rejectionsSent.push(email);
     },
   };
 }

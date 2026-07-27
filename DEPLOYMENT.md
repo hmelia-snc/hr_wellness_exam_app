@@ -152,38 +152,50 @@ HR Dashboard link).
 Uploaded forms are automatically checked via Azure AI Document Intelligence
 (`VERIFICATION_MODE=azure`, set by the provisioning script): the employee's
 upload gets OCR'd with the prebuilt "read" model right after it lands, and
-the record auto-transitions to `completed` or `needs_review` based on three
+the record auto-transitions to `completed` or `needs_review` based on four
 presence checks (`src/lib/verification/azureVerifier.ts`):
 
 1. **Correct form** — the OCR'd text contains a recognizable heading from
    the actual Wellness Exam Verification Form (English or Spanish).
-2. **Date populated** — a filled-in date pattern is present, ignoring the
-   form's own printed instructional date range ("*must be between
-   1/1/26-12/31/26"), which would otherwise make even a blank upload look
-   like it had a date.
-3. **Signature present** — a contiguous handwritten-style span of at least
-   3 characters was detected (a proxy for "was this actually signed," not
-   real signature verification). Single-character noise — e.g. a stray
-   character from the unfilled date field's underscore/slash placeholder
-   getting misread as handwritten — is filtered out; a genuine signature is
-   virtually always more than a couple characters.
+2. **Date populated and within the cycle year** — a filled-in date pattern
+   is present *and* its year matches the record's `cycleYear`, ignoring
+   date-shaped text that isn't the actual exam date: the form's own printed
+   instructional range ("*must be between 1/1/26-12/31/26") and its
+   electronic-submission footer ("Forms must be submitted by December
+   14th, 2026") — both would otherwise make a blank or wrong-year upload
+   look like it had a valid date for the current cycle.
+3. **Physician signature present** — a contiguous handwritten-style span of
+   at least 3 characters specifically within the "Physician Signature" line's
+   own bounded text region (a proxy for "was this actually signed," not real
+   signature verification).
+4. **Employee/spouse signature present** — same check, independently, for
+   the "Employee/Spouse Signature" line's region. Region-bounding (rather
+   than "any handwriting anywhere on the page") matters here specifically:
+   that line sits beside a "Date:" field on the same line, so an
+   unbounded check could mistake a filled-in date for ink on the signature
+   itself. Single-character noise — e.g. a stray character from an unfilled
+   date field's underscore/slash placeholder getting misread as handwritten —
+   is filtered out at every step; a genuine signature is virtually always
+   more than a couple characters.
 
-All three are heuristics confirmed against a real Document Intelligence call
-on the actual blank template (not just unit tests) — that live smoke test is
-in fact what caught both the instructional-date-range and single-character
-noise false positives above before they shipped. False positives/negatives
-are still expected in general use, though: a `needs_review` record shows the
-specific failing reason(s) as a tooltip on its status badge on the
-dashboard, and HR can resolve it with the **Approve** button (stamps
-`reviewedBy`/`reviewedAt` with the signed-in HR user) without needing to
-make the employee re-upload — or open the uploaded file directly from the
-dashboard's **View file** link to judge it themselves first.
+All four are heuristics confirmed against real Document Intelligence calls —
+both on the actual blank template and on a real partially-completed scanned
+submission (not just unit tests). Those live smoke tests are what caught the
+instructional-text false positives, the single-character noise, and the
+"any handwriting anywhere" false positive that region-bounding the signature
+checks was built to fix. False positives/negatives are still expected in
+general use, though: a `needs_review` record shows the specific failing
+reason(s) as a tooltip on its status badge on the dashboard, and HR can
+resolve it with the **Approve** button (stamps `reviewedBy`/`reviewedAt`
+with the signed-in HR user) without needing the employee to re-upload — or
+**Reject** it with a reason, which emails the employee and lets them
+resubmit using their existing link — or open the uploaded file directly
+from the dashboard's **View file** link to judge it themselves first.
 
 This runs fire-and-forget after the employee's upload request already got
 its response, so OCR latency (a few seconds) never makes them wait. It's
-still v1 scope deliberately: presence checks, not per-field extraction (no
-validation that the *name* on the form matches the employee, or that the
-*date* falls within the right cycle year).
+still v1 scope deliberately: presence checks, not full per-field extraction
+(no validation that the *name* on the form matches the employee).
 
 Local dev defaults to `VERIFICATION_MODE=mock` (`src/lib/verification/mockVerifier.ts`):
 every upload auto-passes with no real OCR call, so the full dashboard flow

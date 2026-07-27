@@ -243,3 +243,40 @@ describe("POST /dashboard/employees/:id/delete", () => {
     expect(page.text).toContain("Employee deleted.");
   });
 });
+
+describe("POST /dashboard/employees/bulk-delete", () => {
+  it("removes multiple employees and their records", async () => {
+    const prisma = createFakePrisma();
+    const e1 = await prisma.employee.upsert({
+      where: { email: "one@example.com" },
+      create: { email: "one@example.com", fullName: "One", active: true },
+      update: {},
+    });
+    const e2 = await prisma.employee.upsert({
+      where: { email: "two@example.com" },
+      create: { email: "two@example.com", fullName: "Two", active: true },
+      update: {},
+    });
+    const app = createApp(prisma as any, createFakeBlobStorage(), createFakeEmailSender());
+    const agent = await signedInAgent(app);
+
+    const res = await agent.post("/dashboard/employees/bulk-delete").type("form").send({ ids: [e1.id, e2.id] });
+    expect(res.status).toBe(303);
+    expect(res.headers.location).toBe("/dashboard/employees?bulkDeleted=2");
+
+    expect(await prisma.employee.findUnique({ where: { id: e1.id } })).toBeNull();
+    expect(await prisma.employee.findUnique({ where: { id: e2.id } })).toBeNull();
+
+    const page = await agent.get(res.headers.location);
+    expect(page.text).toContain("Deleted 2 employee(s).");
+  });
+
+  it("requires auth", async () => {
+    const prisma = createFakePrisma();
+    const app = createApp(prisma as any, createFakeBlobStorage(), createFakeEmailSender());
+
+    const res = await request(app).post("/dashboard/employees/bulk-delete").type("form").send({ ids: ["some-id"] });
+    expect(res.status).toBe(302);
+    expect(res.headers.location).toMatch(/^\/auth\/login/);
+  });
+});

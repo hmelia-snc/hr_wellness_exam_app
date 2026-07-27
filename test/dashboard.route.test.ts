@@ -9,9 +9,10 @@ async function seedEmployeeAndRecord(
   overrides: Partial<Record<string, unknown>> = {},
   employeeOverrides: Partial<Record<string, unknown>> = {}
 ) {
+  const email = typeof employeeOverrides.email === "string" ? employeeOverrides.email : "jane.doe@example.com";
   const employee = await prisma.employee.upsert({
-    where: { email: "jane.doe@example.com" },
-    create: { email: "jane.doe@example.com", fullName: "Jane Doe", active: true, ...employeeOverrides },
+    where: { email },
+    create: { email, fullName: "Jane Doe", active: true, ...employeeOverrides },
     update: { ...employeeOverrides },
   });
   const record = {
@@ -187,9 +188,9 @@ describe("POST /dashboard/records/:id/resend", () => {
     expect(page.text).toMatch(/email failed to send/i);
   });
 
-  it("hides Resend/Get Link and shows an inactive note for a deactivated employee", async () => {
+  it("hides Resend/Get Link, disables bulk selection, and shows an inactive note for a deactivated employee", async () => {
     const prisma = createFakePrisma();
-    await seedEmployeeAndRecord(prisma);
+    const { record } = await seedEmployeeAndRecord(prisma);
     prisma._state.employeesByEmail.get("jane.doe@example.com").active = false;
     const app = createApp(prisma as any, createFakeBlobStorage(), createFakeEmailSender());
     const agent = request.agent(app);
@@ -198,19 +199,24 @@ describe("POST /dashboard/records/:id/resend", () => {
     const res = await agent.get("/dashboard?year=2026");
     expect(res.status).toBe(200);
     expect(res.text).toContain("Employee inactive");
-    expect(res.text).not.toContain("/resend?");
+    expect(res.text).not.toContain(`records/${record.id}/resend?`);
     expect(res.text).not.toContain("Get Link");
+    expect(res.text).not.toContain(`openRejectModal(${JSON.stringify([record.id])}`);
+    expect(res.text).toMatch(new RegExp(`value="${record.id}"[^>]*disabled`));
   });
 });
 
 describe("POST /dashboard/records/:id/link", () => {
-  it("generates a fresh token, resets to sent, shows the link, and sends no email", async () => {
+  // When there's no usable existing token (none stored yet, or expired),
+  // this falls back to the old generate-and-invalidate behavior.
+  it("falls back to generating a fresh token when none is on file, resets to sent, shows the link, sends no email", async () => {
     const prisma = createFakePrisma();
     const emailSender = createFakeEmailSender();
     const { record } = await seedEmployeeAndRecord(prisma, {
       status: "needs_review",
       receivedAt: new Date(),
       uploadedFileUrl: "https://fake-blob.test/old-file.pdf",
+      rawToken: null,
     });
     const app = createApp(prisma as any, createFakeBlobStorage(), emailSender);
     const agent = request.agent(app);
@@ -221,6 +227,7 @@ describe("POST /dashboard/records/:id/link", () => {
     expect(res.text).toContain("Jane Doe");
     expect(res.text).toMatch(/\/wellness-exam\/[\w-]+/);
     expect(res.text).toContain('href="/dashboard?year=2026&status=needs_review"');
+    expect(res.text).toMatch(/brand-new/i);
 
     const updated = prisma._state.physicalRecords.find((r: any) => r.id === record.id);
     expect(updated.status).toBe("sent");
@@ -229,6 +236,52 @@ describe("POST /dashboard/records/:id/link", () => {
     expect(updated.receivedAt).toBeNull();
     expect(updated.uploadedFileUrl).toBeNull();
     expect(emailSender.sent).toHaveLength(0);
+  });
+
+  // Regression coverage for the actual feature request: HR clicking "Get
+  // Link" should NOT invalidate the link already emailed to the employee.
+  it("shows the existing link without regenerating when a valid token is on file", async () => {
+    const prisma = createFakePrisma();
+    const emailSender = createFakeEmailSender();
+    const { record } = await seedEmployeeAndRecord(prisma, {
+      status: "sent",
+      rawToken: "existing-raw-token",
+      tokenHash: "existing-token-hash",
+    });
+    const app = createApp(prisma as any, createFakeBlobStorage(), emailSender);
+    const agent = request.agent(app);
+    await agent.post("/auth/login").type("form").send({ returnTo: "/dashboard" });
+
+    const res = await agent.post(`/dashboard/records/${record.id}/link?year=2026`);
+    expect(res.status).toBe(200);
+    expect(res.text).toContain("/wellness-exam/existing-raw-token");
+    expect(res.text).not.toMatch(/brand-new/i);
+
+    const updated = prisma._state.physicalRecords.find((r: any) => r.id === record.id);
+    expect(updated.tokenHash).toBe("existing-token-hash");
+    expect(updated.rawToken).toBe("existing-raw-token");
+    expect(emailSender.sent).toHaveLength(0);
+  });
+
+  it("regenerates when the existing token has expired", async () => {
+    const prisma = createFakePrisma();
+    const { record } = await seedEmployeeAndRecord(prisma, {
+      status: "sent",
+      rawToken: "expired-raw-token",
+      tokenHash: "expired-token-hash",
+      tokenExpiresAt: new Date(Date.now() - 1000),
+    });
+    const app = createApp(prisma as any, createFakeBlobStorage(), createFakeEmailSender());
+    const agent = request.agent(app);
+    await agent.post("/auth/login").type("form").send({ returnTo: "/dashboard" });
+
+    const res = await agent.post(`/dashboard/records/${record.id}/link?year=2026`);
+    expect(res.status).toBe(200);
+    expect(res.text).not.toContain("/wellness-exam/expired-raw-token");
+    expect(res.text).toMatch(/brand-new/i);
+
+    const updated = prisma._state.physicalRecords.find((r: any) => r.id === record.id);
+    expect(updated.tokenHash).not.toBe("expired-token-hash");
   });
 
   it("requires auth", async () => {
@@ -288,6 +341,187 @@ describe("POST /dashboard/records/:id/approve", () => {
     const res = await agent.get("/dashboard?year=2026");
     expect(res.text).toContain("/approve?");
     expect(res.text).toContain('title="No handwritten signature detected');
+  });
+});
+
+describe("POST /dashboard/records/:id/reject", () => {
+  it("marks the record rejected, clears received/completed, stamps who reviewed it, and emails the employee with the reason and existing link", async () => {
+    const prisma = createFakePrisma();
+    const emailSender = createFakeEmailSender();
+    const { record } = await seedEmployeeAndRecord(prisma, {
+      status: "received",
+      receivedAt: new Date(),
+      completedAt: new Date(),
+      rawToken: "existing-raw-token",
+    });
+    const app = createApp(prisma as any, createFakeBlobStorage(), emailSender);
+    const agent = request.agent(app);
+    await agent.post("/auth/login").type("form").send({ returnTo: "/dashboard" });
+
+    const res = await agent
+      .post(`/dashboard/records/${record.id}/reject?year=2026`)
+      .type("form")
+      .send({ reason: "Signature is missing on the physician line." });
+    expect(res.status).toBe(303);
+    expect(res.headers.location).toBe("/dashboard?year=2026");
+
+    const updated = prisma._state.physicalRecords.find((r: any) => r.id === record.id);
+    expect(updated.status).toBe("rejected");
+    expect(updated.rejectionReason).toBe("Signature is missing on the physician line.");
+    expect(updated.receivedAt).toBeNull();
+    expect(updated.completedAt).toBeNull();
+    expect(updated.reviewedBy).toBe("dev-hr@standardnutrition.com");
+    expect(updated.reviewedAt).toBeInstanceOf(Date);
+    // Rejecting must not invalidate the employee's existing link.
+    expect(updated.rawToken).toBe("existing-raw-token");
+
+    expect(emailSender.rejectionsSent).toHaveLength(1);
+    expect(emailSender.rejectionsSent[0]).toMatchObject({
+      reason: "Signature is missing on the physician line.",
+      link: expect.stringContaining("/wellness-exam/existing-raw-token"),
+    });
+  });
+
+  it("requires a non-empty reason", async () => {
+    const prisma = createFakePrisma();
+    const { record } = await seedEmployeeAndRecord(prisma, { status: "received" });
+    const app = createApp(prisma as any, createFakeBlobStorage(), createFakeEmailSender());
+    const agent = request.agent(app);
+    await agent.post("/auth/login").type("form").send({ returnTo: "/dashboard" });
+
+    const res = await agent.post(`/dashboard/records/${record.id}/reject?year=2026`).type("form").send({ reason: "   " });
+    expect(res.status).toBe(400);
+
+    const updated = prisma._state.physicalRecords.find((r: any) => r.id === record.id);
+    expect(updated.status).toBe("received");
+  });
+
+  it("redirects with rejectEmailFailed=1 when the notification email fails, and the dashboard shows a notice", async () => {
+    const prisma = createFakePrisma();
+    const { record } = await seedEmployeeAndRecord(prisma, { status: "received" });
+    const emailSender = createFakeEmailSender({ failFor: new Set(["jane.doe@example.com"]) });
+    const app = createApp(prisma as any, createFakeBlobStorage(), emailSender);
+    const agent = request.agent(app);
+    await agent.post("/auth/login").type("form").send({ returnTo: "/dashboard" });
+
+    const res = await agent
+      .post(`/dashboard/records/${record.id}/reject?year=2026`)
+      .type("form")
+      .send({ reason: "Missing signature." });
+    expect(res.status).toBe(303);
+    expect(res.headers.location).toBe("/dashboard?year=2026&rejectEmailFailed=1");
+
+    const page = await agent.get(res.headers.location);
+    expect(page.text).toMatch(/notification email failed to send/i);
+  });
+
+  it("requires auth", async () => {
+    const prisma = createFakePrisma();
+    const { record } = await seedEmployeeAndRecord(prisma, { status: "received" });
+    const app = createApp(prisma as any, createFakeBlobStorage(), createFakeEmailSender());
+
+    const res = await request(app).post(`/dashboard/records/${record.id}/reject`).type("form").send({ reason: "x" });
+    expect(res.status).toBe(302);
+    expect(res.headers.location).toMatch(/^\/auth\/login/);
+  });
+
+  it("shows a Reject button for sent/received/needs_review but not for rejected or completed records", async () => {
+    const prisma = createFakePrisma();
+    await seedEmployeeAndRecord(prisma, { status: "needs_review" });
+    const app = createApp(prisma as any, createFakeBlobStorage(), createFakeEmailSender());
+    const agent = request.agent(app);
+    await agent.post("/auth/login").type("form").send({ returnTo: "/dashboard" });
+
+    const res = await agent.get("/dashboard?year=2026");
+    expect(res.text).toContain("openRejectModal");
+  });
+});
+
+describe("Dashboard bulk actions", () => {
+  it("bulk-approves selected records", async () => {
+    const prisma = createFakePrisma();
+    const { record: r1 } = await seedEmployeeAndRecord(prisma, { status: "needs_review" }, { email: "a@example.com" });
+    const { record: r2 } = await seedEmployeeAndRecord(prisma, { id: "rec-2", status: "needs_review" }, { email: "b@example.com" });
+    const app = createApp(prisma as any, createFakeBlobStorage(), createFakeEmailSender());
+    const agent = request.agent(app);
+    await agent.post("/auth/login").type("form").send({ returnTo: "/dashboard" });
+
+    const res = await agent
+      .post("/dashboard/bulk/approve?year=2026")
+      .type("form")
+      .send({ ids: [r1.id, r2.id] });
+    expect(res.status).toBe(303);
+    expect(res.headers.location).toBe("/dashboard?year=2026&bulkApproved=2");
+
+    const records = prisma._state.physicalRecords;
+    expect(records.find((r: any) => r.id === r1.id).status).toBe("completed");
+    expect(records.find((r: any) => r.id === r2.id).status).toBe("completed");
+  });
+
+  it("bulk-resends selected records and skips inactive employees", async () => {
+    const prisma = createFakePrisma();
+    const { record: active } = await seedEmployeeAndRecord(prisma, { status: "sent" }, { email: "active@example.com" });
+    const { record: inactive } = await seedEmployeeAndRecord(
+      prisma,
+      { id: "rec-inactive", status: "sent" },
+      { email: "inactive@example.com", active: false }
+    );
+    const emailSender = createFakeEmailSender();
+    const app = createApp(prisma as any, createFakeBlobStorage(), emailSender);
+    const agent = request.agent(app);
+    await agent.post("/auth/login").type("form").send({ returnTo: "/dashboard" });
+
+    const res = await agent
+      .post("/dashboard/bulk/resend?year=2026")
+      .type("form")
+      .send({ ids: [active.id, inactive.id] });
+    expect(res.status).toBe(303);
+    expect(res.headers.location).toBe("/dashboard?year=2026&bulkResent=1&bulkResentFailed=0&bulkResentSkipped=1");
+    expect(emailSender.sent).toHaveLength(1);
+    expect(emailSender.sent[0].toEmail).toBe("active@example.com");
+  });
+
+  it("bulk-rejects selected records with one shared reason", async () => {
+    const prisma = createFakePrisma();
+    const { record: r1 } = await seedEmployeeAndRecord(prisma, { status: "received" }, { email: "a@example.com" });
+    const { record: r2 } = await seedEmployeeAndRecord(prisma, { id: "rec-2", status: "received" }, { email: "b@example.com" });
+    const emailSender = createFakeEmailSender();
+    const app = createApp(prisma as any, createFakeBlobStorage(), emailSender);
+    const agent = request.agent(app);
+    await agent.post("/auth/login").type("form").send({ returnTo: "/dashboard" });
+
+    const res = await agent
+      .post("/dashboard/bulk/reject?year=2026")
+      .type("form")
+      .send({ ids: [r1.id, r2.id], reason: "Date is outside the cycle year." });
+    expect(res.status).toBe(303);
+    expect(res.headers.location).toBe("/dashboard?year=2026&bulkRejected=2&bulkRejectedFailed=0&bulkRejectedSkipped=0");
+
+    const records = prisma._state.physicalRecords;
+    expect(records.find((r: any) => r.id === r1.id).rejectionReason).toBe("Date is outside the cycle year.");
+    expect(records.find((r: any) => r.id === r2.id).rejectionReason).toBe("Date is outside the cycle year.");
+    expect(emailSender.rejectionsSent).toHaveLength(2);
+  });
+
+  it("bulk reject requires a non-empty reason", async () => {
+    const prisma = createFakePrisma();
+    const { record } = await seedEmployeeAndRecord(prisma, { status: "received" });
+    const app = createApp(prisma as any, createFakeBlobStorage(), createFakeEmailSender());
+    const agent = request.agent(app);
+    await agent.post("/auth/login").type("form").send({ returnTo: "/dashboard" });
+
+    const res = await agent.post("/dashboard/bulk/reject?year=2026").type("form").send({ ids: [record.id], reason: "" });
+    expect(res.status).toBe(400);
+  });
+
+  it("bulk actions require auth", async () => {
+    const prisma = createFakePrisma();
+    const { record } = await seedEmployeeAndRecord(prisma, { status: "needs_review" });
+    const app = createApp(prisma as any, createFakeBlobStorage(), createFakeEmailSender());
+
+    const res = await request(app).post("/dashboard/bulk/approve").type("form").send({ ids: [record.id] });
+    expect(res.status).toBe(302);
+    expect(res.headers.location).toMatch(/^\/auth\/login/);
   });
 });
 
@@ -469,7 +703,9 @@ describe("GET /dashboard/export", () => {
     expect(res.headers["content-disposition"]).toMatch(/hr-dashboard-2026\.csv/);
 
     const lines = res.text.trim().split("\n");
-    expect(lines[0]).toBe("Employee,Email,Status,Sent,Received,Completed,Needs Spouse Form,Spouse Received,Verification Result");
+    expect(lines[0]).toBe(
+      "Employee,Email,Status,Sent,Received,Completed,Needs Spouse Form,Spouse Received,Verification Result,Rejection Reason"
+    );
     expect(lines[1]).toContain("Jane Doe");
     expect(lines[1]).toContain("jane.doe@example.com");
     expect(lines[1]).toContain("completed");

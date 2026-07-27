@@ -32,7 +32,7 @@ const BASE_STYLES = `
     padding: 0 1rem;
     box-sizing: border-box;
   }
-  main.wide { max-width: 960px; }
+  main.wide { max-width: 1180px; }
   .brand-header {
     display: flex;
     align-items: center;

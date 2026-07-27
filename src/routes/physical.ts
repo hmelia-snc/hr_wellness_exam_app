@@ -171,7 +171,7 @@ export function createPhysicalRouter(
           // Fire-and-forget: OCR verification can take several seconds for
           // the real Azure verifier, and the employee shouldn't wait on it.
           if (formVerifier) {
-            verifyPhysicalRecord(prisma, formVerifier, record.id, blobPath, formFile.buffer, formFile.mimetype).catch(
+            verifyPhysicalRecord(prisma, formVerifier, record.id, blobPath, formFile.buffer, formFile.mimetype, record.cycleYear).catch(
               (err) => {
                 console.error(
                   `[upload] verification kickoff failed for record=${record.id}:`,

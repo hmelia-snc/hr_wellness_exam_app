@@ -21,7 +21,18 @@ export interface UploadConfirmationEmail {
   link: string;
 }
 
+export interface RejectionEmail {
+  toEmail: string;
+  toName: string;
+  cycleYear: number;
+  reason: string;
+  // The employee's existing (unchanged) upload link, so they can fix and
+  // resubmit without needing a new one.
+  link: string;
+}
+
 export interface EmailSender {
   send(email: PhysicalFormEmail): Promise<void>;
   sendUploadConfirmation(email: UploadConfirmationEmail): Promise<void>;
+  sendRejection(email: RejectionEmail): Promise<void>;
 }

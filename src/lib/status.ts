@@ -5,6 +5,7 @@ export const PHYSICAL_RECORD_STATUSES = [
   "sent",
   "received",
   "needs_review",
+  "rejected",
   "completed",
 ] as const;
 

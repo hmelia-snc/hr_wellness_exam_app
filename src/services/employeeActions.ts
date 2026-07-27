@@ -65,6 +65,7 @@ export async function upsertEmployeeAndSendLink(
       employeeId: employee.id,
       cycleYear: input.cycleYear,
       tokenHash,
+      rawToken,
       tokenExpiresAt: tokenExpiryDate(new Date(), env.TOKEN_EXPIRY_DAYS),
       status: "sent",
     },
@@ -99,7 +100,8 @@ interface ResetRecordResult {
 }
 
 /**
- * Shared by resendLink and generateShareableLink: regenerates a fresh token
+ * Shared by resendLink and getShareableLink's regenerate-on-expiry path:
+ * regenerates a fresh token
  * for an existing PhysicalRecord (invalidating the old one) and resets it to
  * a clean `sent` state — nothing uploaded yet, no email sent yet either
  * (callers decide separately whether to email it).
@@ -120,6 +122,7 @@ async function resetRecordWithFreshToken(prisma: PrismaClient, physicalRecordId:
     where: { id: physicalRecordId },
     data: {
       tokenHash,
+      rawToken,
       tokenExpiresAt: tokenExpiryDate(new Date(), env.TOKEN_EXPIRY_DAYS),
       status: "sent",
       sentAt: null,
@@ -129,12 +132,31 @@ async function resetRecordWithFreshToken(prisma: PrismaClient, physicalRecordId:
       uploadedBlobPath: null,
       uploadedContentType: null,
       verificationResult: null,
+      rejectionReason: null,
       reviewedBy: null,
       reviewedAt: null,
     },
   });
 
   return { rawToken, cycleYear: record.cycleYear, employee };
+}
+
+/**
+ * Manually marks a record `completed` — the same transition the OCR pass
+ * applies automatically, just triggered by HR instead. Shared by the
+ * single-record and bulk "Approve" actions.
+ */
+export async function approveRecord(prisma: PrismaClient, physicalRecordId: string, reviewedBy: string): Promise<void> {
+  await prisma.physicalRecord.update({
+    where: { id: physicalRecordId },
+    data: {
+      status: "completed",
+      completedAt: new Date(),
+      reviewedBy,
+      reviewedAt: new Date(),
+      verificationResult: `Manually approved by ${reviewedBy}.`,
+    },
+  });
 }
 
 export interface ResendLinkResult {
@@ -173,26 +195,101 @@ export interface ShareableLinkResult {
   employeeName: string;
   employeeEmail: string;
   cycleYear: number;
+  // True only when there was no usable existing token (none stored yet, or
+  // it had expired) and a fresh one had to be generated — in which case any
+  // link previously sent to the employee no longer works. False is the
+  // common case: the employee's existing link is simply being shown again.
+  regenerated: boolean;
 }
 
 /**
- * Same reset as resendLink, but doesn't email anything — for HR to grab the
- * link directly from the dashboard (Slack, Teams, in person, etc.) instead
- * of waiting on email delivery. Still invalidates the previous token, same
- * as resendLink, since it's the same underlying reset.
+ * Returns the employee's current upload link for HR to grab from the
+ * dashboard (Slack, Teams, in person, etc.) — without regenerating it, so
+ * whatever link was already emailed to the employee keeps working. Only
+ * falls back to generating (and thereby invalidating) a fresh token when
+ * there's no usable one already: either none stored (a record created
+ * before `rawToken` existed), or the stored one has expired.
  */
-export async function generateShareableLink(
-  prisma: PrismaClient,
-  physicalRecordId: string
-): Promise<ShareableLinkResult> {
+export async function getShareableLink(prisma: PrismaClient, physicalRecordId: string): Promise<ShareableLinkResult> {
   const env = getEnv();
-  const { rawToken, cycleYear, employee } = await resetRecordWithFreshToken(prisma, physicalRecordId);
+  const record = await prisma.physicalRecord.findUnique({ where: { id: physicalRecordId } });
+  if (!record) {
+    throw new Error(`No physical record found with id ${physicalRecordId}`);
+  }
+  const employee = await prisma.employee.findUnique({ where: { id: record.employeeId } });
+  if (!employee) {
+    throw new Error(`No employee found with id ${record.employeeId}`);
+  }
+
+  if (record.rawToken && record.tokenExpiresAt.getTime() >= Date.now()) {
+    return {
+      link: `${env.APP_BASE_URL}/wellness-exam/${record.rawToken}`,
+      employeeName: employee.fullName,
+      employeeEmail: employee.email,
+      cycleYear: record.cycleYear,
+      regenerated: false,
+    };
+  }
+
+  const reset = await resetRecordWithFreshToken(prisma, physicalRecordId);
   return {
-    link: `${env.APP_BASE_URL}/wellness-exam/${rawToken}`,
-    employeeName: employee.fullName,
-    employeeEmail: employee.email,
-    cycleYear,
+    link: `${env.APP_BASE_URL}/wellness-exam/${reset.rawToken}`,
+    employeeName: reset.employee.fullName,
+    employeeEmail: reset.employee.email,
+    cycleYear: reset.cycleYear,
+    regenerated: true,
   };
+}
+
+export interface RejectRecordResult {
+  emailSent: boolean;
+  emailError?: string;
+}
+
+/**
+ * Marks a record `rejected` with a reason and emails the employee. Clears
+ * receivedAt/completedAt so status/progress correctly show "not yet
+ * received" until a corrected form comes in — but deliberately leaves the
+ * uploaded file/blob alone so HR can still pull up what was rejected via
+ * "View file". Reuses the employee's existing link rather than invalidating
+ * it (same as getShareableLink), so they can fix and resubmit with the link
+ * they already have — only falls back to a fresh token if theirs expired.
+ */
+export async function rejectRecord(
+  prisma: PrismaClient,
+  emailSender: EmailSender,
+  physicalRecordId: string,
+  reason: string,
+  reviewedBy: string
+): Promise<RejectRecordResult> {
+  const linkResult = await getShareableLink(prisma, physicalRecordId);
+
+  await prisma.physicalRecord.update({
+    where: { id: physicalRecordId },
+    data: {
+      status: "rejected",
+      rejectionReason: reason,
+      receivedAt: null,
+      completedAt: null,
+      reviewedBy,
+      reviewedAt: new Date(),
+    },
+  });
+
+  try {
+    await emailSender.sendRejection({
+      toEmail: linkResult.employeeEmail,
+      toName: linkResult.employeeName,
+      cycleYear: linkResult.cycleYear,
+      reason,
+      link: linkResult.link,
+    });
+    return { emailSent: true };
+  } catch (err) {
+    const emailError = err instanceof Error ? err.message : String(err);
+    console.error(`[rejectRecord] email send failed for record ${physicalRecordId} (${linkResult.employeeEmail}):`, emailError);
+    return { emailSent: false, emailError };
+  }
 }
 
 /**

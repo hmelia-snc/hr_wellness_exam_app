@@ -21,6 +21,7 @@ export interface EmployeesPageProps {
   addResult?: AddResult;
   importResult?: ImportCycleResult;
   deleted?: boolean;
+  bulkDeleted?: number;
 }
 
 const EXTRA_STYLES = `
@@ -86,6 +87,9 @@ const EXTRA_STYLES = `
   .actions-cell { display: flex; flex-wrap: nowrap; gap: 0.4rem; white-space: nowrap; }
   .actions-cell form { display: inline; }
   .row-errors { color: ${BRAND.darkRed}; }
+  .bulk-toolbar { display: flex; align-items: center; gap: 0.5rem; margin: 0.75rem 0; flex-wrap: wrap; }
+  .bulk-toolbar .delete-button { padding: 0.4rem 0.8rem; font-size: 0.85rem; }
+  .bulk-toolbar-label { font-size: 0.85rem; color: #666; }
   @media (prefers-color-scheme: dark) {
     th, td { border-bottom-color: #3a3836; }
     .status-inactive { background: #333230; color: #ccc; }
@@ -129,6 +133,8 @@ export function renderEmployeesPage(props: EmployeesPageProps): string {
   const importNotice = props.importResult ? importResultSummary(props.importResult) : "";
 
   const deletedNotice = props.deleted ? `<div class="notice-success">Employee deleted.</div>` : "";
+  const bulkDeletedNotice =
+    props.bulkDeleted !== undefined ? `<div class="notice-success">Deleted ${props.bulkDeleted} employee(s).</div>` : "";
 
   const rows = props.employees
     .map((e) => {
@@ -139,22 +145,17 @@ export function renderEmployeesPage(props: EmployeesPageProps): string {
       const confirmAttr = escapeHtml(JSON.stringify(confirmMessage));
       return `
     <tr>
+      <td><input type="checkbox" name="ids" value="${escapeHtml(e.id)}" aria-label="Select ${escapeHtml(e.fullName)}" /></td>
       <td>${escapeHtml(e.fullName)}</td>
       <td>${escapeHtml(e.email)}</td>
       <td>${e.employeeIdExternal ? escapeHtml(e.employeeIdExternal) : "—"}</td>
       <td><span class="status-badge status-${e.active ? "active" : "inactive"}">${e.active ? "active" : "inactive"}</span></td>
       <td>
-        <form method="post" action="/dashboard/employees/${encodeURIComponent(e.id)}/toggle-spouse-form" style="display:inline" title="${escapeHtml(spouseToggleTitle)}">
-          <button type="submit" class="spouse-toggle spouse-toggle-${e.needsSpouseForm ? "yes" : "no"}">${e.needsSpouseForm ? "Yes" : "No"}</button>
-        </form>
+        <button type="submit" formaction="/dashboard/employees/${encodeURIComponent(e.id)}/toggle-spouse-form" formmethod="post" class="spouse-toggle spouse-toggle-${e.needsSpouseForm ? "yes" : "no"}" title="${escapeHtml(spouseToggleTitle)}">${e.needsSpouseForm ? "Yes" : "No"}</button>
       </td>
       <td class="actions-cell">
-        <form method="post" action="/dashboard/employees/${encodeURIComponent(e.id)}/${toggleAction}" style="display:inline">
-          <button type="submit" class="small-button">${toggleLabel}</button>
-        </form>
-        <form method="post" action="/dashboard/employees/${encodeURIComponent(e.id)}/delete" style="display:inline" onsubmit="return confirm(${confirmAttr})">
-          <button type="submit" class="delete-button">Delete</button>
-        </form>
+        <button type="submit" formaction="/dashboard/employees/${encodeURIComponent(e.id)}/${toggleAction}" formmethod="post" class="small-button">${toggleLabel}</button>
+        <button type="submit" formaction="/dashboard/employees/${encodeURIComponent(e.id)}/delete" formmethod="post" class="delete-button" onclick="return confirm(${confirmAttr})">Delete</button>
       </td>
     </tr>`;
     })
@@ -170,6 +171,7 @@ export function renderEmployeesPage(props: EmployeesPageProps): string {
 ${addNotice}
 ${importNotice}
 ${deletedNotice}
+${bulkDeletedNotice}
 
 <div class="card">
   <h2>Add an employee</h2>
@@ -197,14 +199,38 @@ ${deletedNotice}
   </form>
 </div>
 
-<div style="overflow-x: auto;">
-<table>
-  <thead>
-    <tr><th>Name</th><th>Email</th><th>External ID</th><th>Status</th><th>Spouse Form</th><th></th></tr>
-  </thead>
-  <tbody>${rows || `<tr><td colspan="6">No employees yet.</td></tr>`}</tbody>
-</table>
-</div>
+<form id="bulk-form" method="post">
+  <div class="bulk-toolbar">
+    <span class="bulk-toolbar-label">With selected:</span>
+    <button type="submit" formaction="/dashboard/employees/bulk-delete" class="delete-button" onclick="return confirmBulkDelete()">Delete Selected</button>
+  </div>
+  <div style="overflow-x: auto;">
+  <table>
+    <thead>
+      <tr>
+        <th><input type="checkbox" id="select-all" onclick="toggleAllRows(this)" aria-label="Select all" /></th>
+        <th>Name</th><th>Email</th><th>External ID</th><th>Status</th><th>Spouse Form</th><th></th>
+      </tr>
+    </thead>
+    <tbody>${rows || `<tr><td colspan="7">No employees yet.</td></tr>`}</tbody>
+  </table>
+  </div>
+</form>
+
+<script>
+  function toggleAllRows(source) {
+    var boxes = document.querySelectorAll('#bulk-form input[name="ids"]');
+    for (var i = 0; i < boxes.length; i++) boxes[i].checked = source.checked;
+  }
+  function confirmBulkDelete() {
+    var ids = Array.prototype.slice.call(document.querySelectorAll('#bulk-form input[name="ids"]:checked'));
+    if (ids.length === 0) {
+      alert('Select at least one employee first.');
+      return false;
+    }
+    return confirm('Permanently delete ' + ids.length + ' employee(s)? This cannot be undone.');
+  }
+</script>
 `;
 
   return renderLayout("Manage Employees", body, { wide: true, extraStyles: EXTRA_STYLES });

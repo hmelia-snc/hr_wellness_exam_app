@@ -99,18 +99,31 @@ cycle with sent/received/completed timestamps, filterable by status, plus a
 the old link), clears any uploaded-file/received/completed state, resets
 status to `sent`, and re-sends the email. Works from any status.
 
-**Get Link** button per row — same reset as Resend, but shows the new link
-directly in the dashboard instead of emailing it (for pasting into Slack,
-Teams, or handing to someone in person). No raw token is ever stored in the
-database (see "Token storage" below), so this has to generate a fresh one on
-demand — meaning, like Resend, it invalidates whatever link was sent before.
+**Get Link** button per row — shows the employee's *existing* link (their
+token is stored in plain text alongside its hash — see "Token storage"
+below) without touching anything, so sharing it again doesn't invalidate
+what was already emailed. Only falls back to generating a fresh token
+(invalidating the old one, same as Resend) if there's no usable token on
+file yet or it's expired.
+
+**Reject** button per row — opens a modal for a reason, then marks the
+record `rejected`, clears received/completed state, and emails the employee
+the reason plus their *existing* link (same non-invalidating behavior as Get
+Link) so they can fix and resubmit without a new link.
+
+**Bulk actions** — checkboxes per row (a "select all" in the header) plus an
+"Approve Selected" / "Resend Selected" / "Reject Selected" toolbar above the
+table; Reject Selected applies one shared reason to every selected record.
+Resend/Reject silently skip any selected row whose employee is inactive.
 
 **Manage Employees** (`/dashboard/employees`, linked from the main
 dashboard) — add a single employee (name/email/optional external
 ID/cycle year, immediately creates a record and sends the link) or upload a
-CSV (same underlying `importCycle` the CLI uses), and deactivate/reactivate
-any employee (`Employee.active`, a soft toggle — historical records/files
-are untouched, they just stop being included in future cycle imports).
+CSV (same underlying `importCycle` the CLI uses), deactivate/reactivate any
+employee (`Employee.active`, a soft toggle — historical records/files are
+untouched, they just stop being included in future cycle imports), and
+bulk-delete via row checkboxes + a "Delete Selected" button (a full purge —
+see `deleteEmployee`, irreversible).
 
 Not yet built: per-record file view, resolving a `needs_review` case
 directly from the dashboard, CSV export.
@@ -196,9 +209,13 @@ variants also covered in the guidelines document):
 
 ## Notable design choices
 
-- **Token storage:** only a SHA-256 hash of each token is persisted
-  (`tokenHash`); the raw token exists only in the outgoing email link/URL. A
-  database read alone can't be used to forge a valid employee link.
+- **Token storage:** both a SHA-256 hash (`tokenHash`, used to validate an
+  incoming token in O(1) without ever comparing raw values) and a plain-text
+  copy (`rawToken`) are persisted. The plain-text copy exists specifically so
+  HR's "Get Link" action can show an employee's existing link back to them
+  without generating a new one — a deliberate tradeoff of "a database leak
+  exposes live upload links" against "HR can't invalidate a link someone
+  already has just by looking it up."
 - **No Prisma enum for `status`:** Prisma's `sqlserver` connector doesn't
   support native enums, so `physical_records.status` is a plain string
   constrained by `src/lib/status.ts` at the application layer instead.

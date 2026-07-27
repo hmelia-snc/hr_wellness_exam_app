@@ -1,6 +1,8 @@
 import { describe, expect, it } from "vitest";
 import { evaluateOcrResult } from "../src/lib/verification/azureVerifier.js";
 
+const CYCLE_YEAR = 2026;
+
 const GOOD_ENGLISH_CONTENT = `
 WELLNESS EXAM VERIFICATION FORM
 Patient Full Legal Name (printed): Jane Doe
@@ -34,48 +36,61 @@ const NOISE_STYLE = [
 ];
 
 describe("evaluateOcrResult", () => {
-  it("passes when the form is identifiable, a date is filled in, and both signatures are present", () => {
-    const result = evaluateOcrResult(GOOD_ENGLISH_CONTENT, BOTH_SIGNED_STYLE);
+  it("passes when the form is identifiable, a date within the cycle year is filled in, and both signatures are present", () => {
+    const result = evaluateOcrResult(GOOD_ENGLISH_CONTENT, BOTH_SIGNED_STYLE, CYCLE_YEAR);
     expect(result.passed).toBe(true);
     expect(result.summary).toMatch(/correct form/i);
   });
 
   it("fails as blank/unreadable when there's barely any text", () => {
-    const result = evaluateOcrResult("hi", BOTH_SIGNED_STYLE);
+    const result = evaluateOcrResult("hi", BOTH_SIGNED_STYLE, CYCLE_YEAR);
     expect(result.passed).toBe(false);
     expect(result.summary).toMatch(/blank or unreadable/i);
   });
 
   it("flags a document that doesn't look like the Wellness Exam form", () => {
     const content = "Some Unrelated Document with a date 3/15/2026 and enough padding text to pass the length check.";
-    const result = evaluateOcrResult(content, BOTH_SIGNED_STYLE);
+    const result = evaluateOcrResult(content, BOTH_SIGNED_STYLE, CYCLE_YEAR);
     expect(result.passed).toBe(false);
     expect(result.summary).toMatch(/doesn't appear to be the Wellness Exam Verification Form/);
   });
 
   it("flags a missing completed date", () => {
     const content = GOOD_ENGLISH_CONTENT.replace("3/15/2026", "___/___/___");
-    const result = evaluateOcrResult(content, BOTH_SIGNED_STYLE);
+    const result = evaluateOcrResult(content, BOTH_SIGNED_STYLE, CYCLE_YEAR);
     expect(result.passed).toBe(false);
     expect(result.summary).toMatch(/no completed date found/);
   });
 
+  it("flags a completed date that falls outside the record's cycle year", () => {
+    const result = evaluateOcrResult(GOOD_ENGLISH_CONTENT, BOTH_SIGNED_STYLE, 2025);
+    expect(result.passed).toBe(false);
+    expect(result.summary).toMatch(/not within the 2025 cycle year/);
+    expect(result.summary).not.toMatch(/no completed date found/);
+  });
+
+  it("accepts a 2-digit year date that matches the cycle year", () => {
+    const content = GOOD_ENGLISH_CONTENT.replace("3/15/2026", "3/15/26");
+    const result = evaluateOcrResult(content, BOTH_SIGNED_STYLE, CYCLE_YEAR);
+    expect(result.passed).toBe(true);
+  });
+
   it("flags a missing physician signature when only the employee/spouse signed", () => {
-    const result = evaluateOcrResult(GOOD_ENGLISH_CONTENT, ONLY_EMPLOYEE_SIGNED_STYLE);
+    const result = evaluateOcrResult(GOOD_ENGLISH_CONTENT, ONLY_EMPLOYEE_SIGNED_STYLE, CYCLE_YEAR);
     expect(result.passed).toBe(false);
     expect(result.summary).toMatch(/physician signature missing/);
     expect(result.summary).not.toMatch(/employee\/spouse signature missing/);
   });
 
   it("flags a missing employee/spouse signature when only the physician signed", () => {
-    const result = evaluateOcrResult(GOOD_ENGLISH_CONTENT, ONLY_PHYSICIAN_SIGNED_STYLE);
+    const result = evaluateOcrResult(GOOD_ENGLISH_CONTENT, ONLY_PHYSICIAN_SIGNED_STYLE, CYCLE_YEAR);
     expect(result.passed).toBe(false);
     expect(result.summary).toMatch(/employee\/spouse signature missing/);
     expect(result.summary).not.toMatch(/physician signature missing/);
   });
 
   it("flags both signatures missing when neither is present", () => {
-    const result = evaluateOcrResult(GOOD_ENGLISH_CONTENT, NEITHER_SIGNED_STYLE);
+    const result = evaluateOcrResult(GOOD_ENGLISH_CONTENT, NEITHER_SIGNED_STYLE, CYCLE_YEAR);
     expect(result.passed).toBe(false);
     expect(result.summary).toMatch(/physician signature missing/);
     expect(result.summary).toMatch(/employee\/spouse signature missing/);
@@ -83,7 +98,7 @@ describe("evaluateOcrResult", () => {
 
   it("lists every failing reason together", () => {
     const content = "Some Unrelated Document with enough padding text to clear the minimum length check for OCR.";
-    const result = evaluateOcrResult(content, NEITHER_SIGNED_STYLE);
+    const result = evaluateOcrResult(content, NEITHER_SIGNED_STYLE, CYCLE_YEAR);
     expect(result.passed).toBe(false);
     expect(result.summary).toMatch(/doesn't appear to be the Wellness Exam Verification Form/);
     expect(result.summary).toMatch(/no completed date found/);
@@ -100,10 +115,14 @@ describe("evaluateOcrResult", () => {
     `;
     const employeeOffset = content.indexOf("Firma del empleado/cónyuge:") + "Firma del empleado/cónyuge:".length + 1;
     const physicianOffset = content.indexOf("Firma del médico:") + "Firma del médico:".length + 1;
-    const result = evaluateOcrResult(content, [
-      { isHandwritten: true, confidence: 0.8, spans: [{ offset: employeeOffset, length: 8 }] },
-      { isHandwritten: true, confidence: 0.8, spans: [{ offset: physicianOffset, length: 8 }] },
-    ]);
+    const result = evaluateOcrResult(
+      content,
+      [
+        { isHandwritten: true, confidence: 0.8, spans: [{ offset: employeeOffset, length: 8 }] },
+        { isHandwritten: true, confidence: 0.8, spans: [{ offset: physicianOffset, length: 8 }] },
+      ],
+      CYCLE_YEAR
+    );
     expect(result.passed).toBe(true);
   });
 
@@ -111,10 +130,14 @@ describe("evaluateOcrResult", () => {
     const content = GOOD_ENGLISH_CONTENT.toLowerCase();
     const employeeOffset = content.indexOf("employee/spouse signature:") + "employee/spouse signature:".length + 1;
     const physicianOffset = content.indexOf("physician signature:") + "physician signature:".length + 1;
-    const result = evaluateOcrResult(content, [
-      { isHandwritten: true, confidence: 0.8, spans: [{ offset: employeeOffset, length: 8 }] },
-      { isHandwritten: true, confidence: 0.8, spans: [{ offset: physicianOffset, length: 8 }] },
-    ]);
+    const result = evaluateOcrResult(
+      content,
+      [
+        { isHandwritten: true, confidence: 0.8, spans: [{ offset: employeeOffset, length: 8 }] },
+        { isHandwritten: true, confidence: 0.8, spans: [{ offset: physicianOffset, length: 8 }] },
+      ],
+      CYCLE_YEAR
+    );
     expect(result.passed).toBe(true);
   });
 
@@ -127,13 +150,13 @@ describe("evaluateOcrResult", () => {
         Employee/Spouse Signature: ______________________________
         Physician Signature: ______________________________
       `;
-      const result = evaluateOcrResult(content, BOTH_SIGNED_STYLE);
+      const result = evaluateOcrResult(content, BOTH_SIGNED_STYLE, CYCLE_YEAR);
       expect(result.passed).toBe(false);
       expect(result.summary).toMatch(/no completed date found/);
     });
 
     it("does not treat isolated single-character handwritten noise as a signature", () => {
-      const result = evaluateOcrResult(GOOD_ENGLISH_CONTENT, NOISE_STYLE);
+      const result = evaluateOcrResult(GOOD_ENGLISH_CONTENT, NOISE_STYLE, CYCLE_YEAR);
       expect(result.passed).toBe(false);
       expect(result.summary).toMatch(/physician signature missing/);
       expect(result.summary).toMatch(/employee\/spouse signature missing/);
@@ -146,8 +169,43 @@ describe("evaluateOcrResult", () => {
         *must be between 1/1/26-12/31/26
         Physician Signature: ______________________________
       `;
-      const result = evaluateOcrResult(content, BOTH_SIGNED_STYLE);
+      const result = evaluateOcrResult(content, BOTH_SIGNED_STYLE, CYCLE_YEAR);
       expect(result.summary).not.toMatch(/no completed date found/);
+    });
+  });
+
+  describe("regression: cycle-year check isn't fooled by unrelated dates on the form", () => {
+    it("doesn't let the form's own instructional date range satisfy the cycle-year check", () => {
+      // The exam date field itself is blank, but the instructional line's
+      // "1/1/26-12/31/26" contains a year that matches the cycle — it must
+      // still be excluded before checking, same as it is for presence.
+      const content = `
+        WELLNESS EXAM VERIFICATION FORM
+        Date of Annual Preventive Examination: _____/_____/_____
+        *must be between 1/1/26-12/31/26
+        Employee/Spouse Signature: (signed)
+        Physician Signature: (signed)
+      `;
+      const result = evaluateOcrResult(content, BOTH_SIGNED_STYLE, CYCLE_YEAR);
+      expect(result.passed).toBe(false);
+      expect(result.summary).toMatch(/no completed date found/);
+    });
+
+    it("doesn't let the submission-deadline footer's year satisfy the cycle-year check", () => {
+      // Confirmed present on a real scanned submission: "Forms must be
+      // submitted by December 14th, 2026" — its year will often
+      // coincidentally match the current cycle, which must not mask a
+      // genuinely wrong exam date elsewhere on the form.
+      const content = `
+        WELLNESS EXAM VERIFICATION FORM
+        Date of Annual Preventive Examination: 3/15/2024
+        Employee/Spouse Signature: (signed)
+        Physician Signature: (signed)
+        Forms must be submitted by December 14th, 2026
+      `;
+      const result = evaluateOcrResult(content, BOTH_SIGNED_STYLE, CYCLE_YEAR);
+      expect(result.passed).toBe(false);
+      expect(result.summary).toMatch(/not within the 2026 cycle year/);
     });
   });
 
@@ -180,20 +238,25 @@ describe("evaluateOcrResult", () => {
     ];
 
     it("is not marked complete — neither signature line actually has ink on it", () => {
-      const result = evaluateOcrResult(content, styles);
+      const result = evaluateOcrResult(content, styles, CYCLE_YEAR);
       expect(result.passed).toBe(false);
       expect(result.summary).toMatch(/physician signature missing/);
       expect(result.summary).toMatch(/employee\/spouse signature missing/);
     });
 
     it("does not mistake the printed patient name for a signature", () => {
-      const result = evaluateOcrResult(content, styles);
+      const result = evaluateOcrResult(content, styles, CYCLE_YEAR);
       expect(result.summary).toMatch(/employee\/spouse signature missing/);
     });
 
     it("does not mistake the date next to the Employee/Spouse Signature line for a signature", () => {
-      const result = evaluateOcrResult(content, styles);
+      const result = evaluateOcrResult(content, styles, CYCLE_YEAR);
       expect(result.summary).toMatch(/employee\/spouse signature missing/);
+    });
+
+    it("flags the employee/spouse's own date (2020) as outside a 2026 cycle", () => {
+      const result = evaluateOcrResult(content, styles, CYCLE_YEAR);
+      expect(result.summary).toMatch(/not within the 2026 cycle year/);
     });
   });
 });

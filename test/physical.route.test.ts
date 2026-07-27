@@ -207,6 +207,10 @@ describe("POST /wellness-exam/:token/upload", () => {
     await new Promise((resolve) => setTimeout(resolve, 20));
 
     expect(formVerifier.calls).toHaveLength(1);
+    // The OCR date-vs-cycle-year check needs the record's actual cycle
+    // year, not a hardcoded one — confirm it's really threaded through from
+    // the route down to the verifier call.
+    expect(formVerifier.calls[0].cycleYear).toBe(2026);
     const updated = prisma._state.physicalRecords.find((r: any) => r.id === record.id);
     expect(updated.status).toBe("completed");
     expect(updated.verificationResult).toBe("looks complete");

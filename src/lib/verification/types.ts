@@ -4,5 +4,5 @@ export interface VerificationResult {
 }
 
 export interface FormVerifier {
-  verify(buffer: Buffer, contentType: string): Promise<VerificationResult>;
+  verify(buffer: Buffer, contentType: string, cycleYear: number): Promise<VerificationResult>;
 }

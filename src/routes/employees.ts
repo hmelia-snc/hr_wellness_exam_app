@@ -7,6 +7,7 @@ import type { BlobStorage } from "../lib/blobStorage.js";
 import { upsertEmployeeAndSendLink, deleteEmployee } from "../services/employeeActions.js";
 import { importCycle } from "../services/importCycle.js";
 import { renderEmployeesPage } from "../views/employeesPage.js";
+import { toIdArray } from "../lib/requestArrays.js";
 
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 5 * 1024 * 1024 } });
 
@@ -40,6 +41,7 @@ export function createEmployeesRouter(prisma: PrismaClient, emailSender: EmailSe
           employees: toEmployeeRows(employees),
           addResult,
           deleted: req.query.deleted === "1",
+          bulkDeleted: typeof req.query.bulkDeleted === "string" ? Number(req.query.bulkDeleted) || undefined : undefined,
         })
       );
     } catch (err) {
@@ -144,6 +146,18 @@ export function createEmployeesRouter(prisma: PrismaClient, emailSender: EmailSe
     try {
       await deleteEmployee(prisma, blobStorage, req.params.id);
       res.redirect(303, "/dashboard/employees?deleted=1");
+    } catch (err) {
+      next(err);
+    }
+  });
+
+  router.post("/bulk-delete", requireHrAuth, async (req: Request, res: Response, next: NextFunction) => {
+    try {
+      const ids = toIdArray(req.body?.ids);
+      for (const id of ids) {
+        await deleteEmployee(prisma, blobStorage, id);
+      }
+      res.redirect(303, `/dashboard/employees?bulkDeleted=${ids.length}`);
     } catch (err) {
       next(err);
     }

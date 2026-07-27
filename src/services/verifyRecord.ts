@@ -18,10 +18,11 @@ export async function verifyPhysicalRecord(
   recordId: string,
   blobPath: string,
   buffer: Buffer,
-  contentType: string
+  contentType: string,
+  cycleYear: number
 ): Promise<void> {
   try {
-    const result = await formVerifier.verify(buffer, contentType);
+    const result = await formVerifier.verify(buffer, contentType, cycleYear);
 
     const current = await prisma.physicalRecord.findUnique({ where: { id: recordId } });
     if (!current || current.uploadedBlobPath !== blobPath) {

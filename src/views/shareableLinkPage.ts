@@ -6,6 +6,7 @@ export interface ShareableLinkPageProps {
   employeeName: string;
   employeeEmail: string;
   cycleYear: number;
+  regenerated: boolean;
   backHref: string;
 }
 
@@ -14,14 +15,21 @@ const EXTRA_STYLES = `
 `;
 
 export function renderShareableLinkPage(props: ShareableLinkPageProps): string {
+  const notice = props.regenerated
+    ? `<p class="notice">
+  ${escapeHtml(props.employeeName)}'s previous link for the ${props.cycleYear} cycle had no usable
+  token on file (or had expired), so this is a brand-new one — it invalidated
+  that old link. Share this one instead.
+</p>`
+    : `<p class="notice-success">
+  This is ${escapeHtml(props.employeeName)}'s current link for the ${props.cycleYear} cycle —
+  the same one already sent to ${escapeHtml(props.employeeEmail)}. Sharing it again doesn't
+  invalidate anything.
+</p>`;
+
   const body = `
 <h1>Link for ${escapeHtml(props.employeeName)}</h1>
-<p class="notice">
-  This is a brand-new link for the ${props.cycleYear} cycle — generating it
-  invalidated any link previously sent to
-  ${escapeHtml(props.employeeName)} (${escapeHtml(props.employeeEmail)}).
-  Share this one instead.
-</p>
+${notice}
 <label for="link">Link / Enlace</label>
 <input class="link-field" type="text" id="link" value="${escapeHtml(props.link)}" readonly onclick="this.select()" />
 <p><a href="${props.backHref}">&larr; Back to Dashboard</a></p>

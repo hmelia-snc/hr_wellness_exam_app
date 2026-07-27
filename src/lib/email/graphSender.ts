@@ -2,7 +2,7 @@ import "isomorphic-fetch";
 import { ClientSecretCredential } from "@azure/identity";
 import { Client } from "@microsoft/microsoft-graph-client";
 import { TokenCredentialAuthenticationProvider } from "@microsoft/microsoft-graph-client/authProviders/azureTokenCredentials/index.js";
-import type { EmailSender, PhysicalFormEmail, UploadConfirmationEmail } from "./types.js";
+import type { EmailSender, PhysicalFormEmail, UploadConfirmationEmail, RejectionEmail } from "./types.js";
 import type { Env } from "../../config/env.js";
 import { escapeHtml } from "../html.js";
 
@@ -132,6 +132,34 @@ export class GraphEmailSender implements EmailSender {
               ${this.brandHeader()}
               <p>Hi ${escapeHtml(email.toName)},</p>
               ${bodyContent}
+              ${this.brandFooter()}
+            </div>
+          `,
+        },
+        toRecipients: [{ emailAddress: { address: email.toEmail } }],
+        ccRecipients: [{ emailAddress: { address: this.senderAddress } }],
+      },
+      saveToSentItems: true,
+    });
+  }
+
+  async sendRejection(email: RejectionEmail): Promise<void> {
+    await this.client.api(`/users/${this.senderAddress}/sendMail`).post({
+      message: {
+        subject: `${email.cycleYear} Wellness Exam Verification — Needs Attention`,
+        body: {
+          contentType: "HTML",
+          content: `
+            <div style="font-family: Arial, sans-serif; color: #2C2A29;">
+              ${this.brandHeader()}
+              <p>Hi ${escapeHtml(email.toName)},</p>
+              <p>HR reviewed your ${email.cycleYear} Wellness Exam Verification form submission and
+              it couldn't be accepted as-is:</p>
+              <p style="background: #FBE9E8; border: 1px solid #F0C3C0; border-radius: 6px; padding: 0.75rem 1rem; color: #9A3324;">
+                ${escapeHtml(email.reason)}
+              </p>
+              <p>Please use the link below to review and resubmit your form:</p>
+              <p><a href="${email.link}" style="color: #DA291C;">${email.link}</a></p>
               ${this.brandFooter()}
             </div>
           `,

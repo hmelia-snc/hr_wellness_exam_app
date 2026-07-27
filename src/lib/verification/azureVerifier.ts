@@ -25,19 +25,29 @@ const MAX_SIGNATURE_REGION_LENGTH = 150;
 // check.
 const FORM_IDENTITY_KEYWORDS = ["wellness exam", "verification form", "examen de bienestar", "formulario de verificación"];
 
-// Matches a filled-in date like "3/15/2026" or "03-15-26". The blank
-// template's date fields are underscores ("_____/_____/_____"), which
-// contain no digits, so this only matches once someone has actually written
-// a date in — it isn't fooled by an unfilled date field itself.
-const NUMERIC_DATE_PATTERN = /\b\d{1,2}[/-]\d{1,2}[/-]\d{2,4}\b/;
+// Matches a filled-in date like "3/15/2026" or "03-15-26", capturing the
+// year. The blank template's date fields are underscores
+// ("_____/_____/_____"), which contain no digits, so this only matches once
+// someone has actually written a date in — it isn't fooled by an unfilled
+// date field itself. `g` so every date-shaped match in the document can be
+// checked against the cycle year, not just the first.
+const NUMERIC_DATE_PATTERN = /\b\d{1,2}[/-]\d{1,2}[/-](\d{2,4})\b/g;
 const MONTH_NAME_DATE_PATTERN =
-  /\b(january|february|march|april|may|june|july|august|september|october|november|december|enero|febrero|marzo|abril|mayo|junio|julio|agosto|septiembre|octubre|noviembre|diciembre)\s+\d{1,2},?\s+\d{4}\b/i;
+  /\b(?:january|february|march|april|may|june|july|august|september|october|november|december|enero|febrero|marzo|abril|mayo|junio|julio|agosto|septiembre|octubre|noviembre|diciembre)\s+\d{1,2},?\s+(\d{4})\b/gi;
 
-// The form's own printed instructions ("*must be between 1/1/26-12/31/26" /
-// "*debe ser entre el 1/1/26 y el 31/12/26") contain date-shaped text, so a
-// completely blank, unsigned upload would otherwise pass the date check on
-// its instructional footnote alone. This line is excluded before testing.
+// The form's own printed instructions contain date-shaped text unrelated to
+// the exam date itself, so a completely blank, unsigned upload — or one
+// whose real exam date is simply in the wrong year — could otherwise pass
+// (or spuriously match the right cycle year) on these alone. Both lines are
+// excluded before scanning for dates:
+//  - "*must be between 1/1/26-12/31/26" / "*debe ser entre el 1/1/26 y el
+//    31/12/26" — printed on every blank form regardless of cycle year.
+//  - "Forms must be submitted by December 14th, 2026" — confirmed present
+//    on a real scanned submission; its year will often coincidentally match
+//    the current cycle, which would mask a genuinely missing/wrong exam
+//    date elsewhere on the form.
 const INSTRUCTIONAL_DATE_RANGE_PATTERN = /\*?\s*(must be between|debe ser entre)[^\n]*/gi;
+const INSTRUCTIONAL_SUBMIT_DEADLINE_PATTERN = /forms? must be submitted by[^\n]*/gi;
 
 // The form requires two independent signatures — the physician certifying
 // the exam happened, and the employee/spouse certifying they understand the
@@ -85,8 +95,27 @@ interface OcrStyle {
   spans?: OcrSpan[];
 }
 
-function withInstructionalDateRangeRemoved(content: string): string {
-  return content.replace(INSTRUCTIONAL_DATE_RANGE_PATTERN, "");
+function withNoisyDateTextRemoved(content: string): string {
+  return content.replace(INSTRUCTIONAL_DATE_RANGE_PATTERN, "").replace(INSTRUCTIONAL_SUBMIT_DEADLINE_PATTERN, "");
+}
+
+// A 2-digit year (as printed on the form's own "1/1/26-12/31/26" footnote,
+// and plausible for a handwritten date too) is assumed to be 20xx — correct
+// for any cycle year this app will realistically be used for.
+function normalizeYear(year: number): number {
+  return year < 100 ? 2000 + year : year;
+}
+
+/** Every year mentioned in a date-shaped match in the document, deduplicated. */
+function extractDateYears(content: string): Set<number> {
+  const years = new Set<number>();
+  for (const match of content.matchAll(NUMERIC_DATE_PATTERN)) {
+    years.add(normalizeYear(Number(match[1])));
+  }
+  for (const match of content.matchAll(MONTH_NAME_DATE_PATTERN)) {
+    years.add(Number(match[1]));
+  }
+  return years;
 }
 
 interface TextRegion {
@@ -133,16 +162,16 @@ function hasSignature(content: string, styles: OcrStyle[], labelPattern: RegExp)
 /**
  * Pure post-processing of an OCR result: whether the uploaded document (a)
  * looks like the actual Wellness Exam Verification Form, (b) has a
- * completed date written in, and (c) has both the physician's and the
- * employee/spouse's signatures. All three are presence-check heuristics,
- * not exact validation (no confirmation the date falls in the right cycle
- * year, or whose signature it is) — false positives/negatives land in
- * `needs_review` for HR to resolve, and the summary lists every failing
- * check so the dashboard tooltip is specific. Extracted from
- * AzureDocumentIntelligenceVerifier so it's unit-testable without mocking
- * the Document Intelligence network client.
+ * completed date written in that falls within the record's cycle year, and
+ * (c) has both the physician's and the employee/spouse's signatures. All
+ * three are presence-check heuristics, not exact validation (no
+ * confirmation of whose signature it is, for instance) — false
+ * positives/negatives land in `needs_review` for HR to resolve, and the
+ * summary lists every failing check so the dashboard tooltip is specific.
+ * Extracted from AzureDocumentIntelligenceVerifier so it's unit-testable
+ * without mocking the Document Intelligence network client.
  */
-export function evaluateOcrResult(content: string, styles: OcrStyle[]): VerificationResult {
+export function evaluateOcrResult(content: string, styles: OcrStyle[], cycleYear: number): VerificationResult {
   if (content.trim().length < MIN_TEXT_LENGTH) {
     return { passed: false, summary: "Document appears blank or unreadable — needs manual review." };
   }
@@ -153,9 +182,12 @@ export function evaluateOcrResult(content: string, styles: OcrStyle[]): Verifica
   const looksLikeCorrectForm = FORM_IDENTITY_KEYWORDS.some((keyword) => normalized.includes(keyword));
   if (!looksLikeCorrectForm) reasons.push("doesn't appear to be the Wellness Exam Verification Form");
 
-  const contentForDateCheck = withInstructionalDateRangeRemoved(content);
-  const hasDate = NUMERIC_DATE_PATTERN.test(contentForDateCheck) || MONTH_NAME_DATE_PATTERN.test(contentForDateCheck);
-  if (!hasDate) reasons.push("no completed date found");
+  const dateYears = extractDateYears(withNoisyDateTextRemoved(content));
+  if (dateYears.size === 0) {
+    reasons.push("no completed date found");
+  } else if (!dateYears.has(cycleYear)) {
+    reasons.push(`completed date is not within the ${cycleYear} cycle year`);
+  }
 
   if (!hasSignature(content, styles, PHYSICIAN_SIGNATURE_LABEL_PATTERN)) reasons.push("physician signature missing");
   if (!hasSignature(content, styles, EMPLOYEE_SIGNATURE_LABEL_PATTERN)) reasons.push("employee/spouse signature missing");
@@ -184,9 +216,9 @@ export class AzureDocumentIntelligenceVerifier implements FormVerifier {
     );
   }
 
-  async verify(buffer: Buffer, _contentType: string): Promise<VerificationResult> {
+  async verify(buffer: Buffer, _contentType: string, cycleYear: number): Promise<VerificationResult> {
     const poller = await this.client.beginAnalyzeDocument("prebuilt-read", buffer);
     const result = await poller.pollUntilDone();
-    return evaluateOcrResult(result.content ?? "", result.styles ?? []);
+    return evaluateOcrResult(result.content ?? "", result.styles ?? [], cycleYear);
   }
 }
