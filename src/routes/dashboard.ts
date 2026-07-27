@@ -29,75 +29,83 @@ function cycleYearAndStatusFilter(req: Request): { cycleYear: number; statusFilt
 export function createDashboardRouter(prisma: PrismaClient, emailSender: EmailSender, blobStorage: BlobStorage): Router {
   const router = Router();
 
-  router.get("/", requireHrAuth, async (req: Request, res: Response) => {
-    const { cycleYear, statusFilter } = cycleYearAndStatusFilter(req);
+  router.get("/", requireHrAuth, async (req: Request, res: Response, next: NextFunction) => {
+    try {
+      const { cycleYear, statusFilter } = cycleYearAndStatusFilter(req);
 
-    const [records, distinctYears] = await Promise.all([
-      prisma.physicalRecord.findMany({
+      const [records, distinctYears] = await Promise.all([
+        prisma.physicalRecord.findMany({
+          where: { cycleYear, ...(statusFilter ? { status: statusFilter } : {}) },
+          include: { employee: true },
+          orderBy: { createdAt: "asc" },
+        }),
+        prisma.physicalRecord.findMany({ select: { cycleYear: true }, distinct: ["cycleYear"] }),
+      ]);
+      // Always offer the current calendar year even before any cycle has been
+      // started for it, so HR can find it in the selector to kick one off.
+      const availableYears = [...new Set([...distinctYears.map((r) => r.cycleYear), new Date().getFullYear(), cycleYear])].sort(
+        (a, b) => b - a
+      );
+
+      res.send(
+        renderDashboardPage({
+          hrUser: req.session.hrUser!,
+          cycleYear,
+          availableYears,
+          statusFilter,
+          resendFailed: req.query.resendFailed === "1",
+          records: records.map((record) => ({
+            id: record.id,
+            employeeName: record.employee.fullName,
+            employeeEmail: record.employee.email,
+            employeeActive: record.employee.active,
+            status: record.status,
+            sentAt: record.sentAt,
+            receivedAt: record.receivedAt,
+            completedAt: record.completedAt,
+            needsSpouseForm: record.employee.needsSpouseForm,
+            spouseReceivedAt: record.spouseReceivedAt,
+            verificationResult: record.verificationResult,
+            hasUploadedFile: Boolean(record.uploadedBlobPath),
+            hasSpouseFile: Boolean(record.spouseUploadedBlobPath),
+          })),
+        })
+      );
+    } catch (err) {
+      next(err);
+    }
+  });
+
+  router.get("/export", requireHrAuth, async (req: Request, res: Response, next: NextFunction) => {
+    try {
+      const { cycleYear, statusFilter } = cycleYearAndStatusFilter(req);
+
+      const records = await prisma.physicalRecord.findMany({
         where: { cycleYear, ...(statusFilter ? { status: statusFilter } : {}) },
         include: { employee: true },
         orderBy: { createdAt: "asc" },
-      }),
-      prisma.physicalRecord.findMany({ select: { cycleYear: true }, distinct: ["cycleYear"] }),
-    ]);
-    // Always offer the current calendar year even before any cycle has been
-    // started for it, so HR can find it in the selector to kick one off.
-    const availableYears = [...new Set([...distinctYears.map((r) => r.cycleYear), new Date().getFullYear(), cycleYear])].sort(
-      (a, b) => b - a
-    );
+      });
 
-    res.send(
-      renderDashboardPage({
-        hrUser: req.session.hrUser!,
-        cycleYear,
-        availableYears,
-        statusFilter,
-        resendFailed: req.query.resendFailed === "1",
-        records: records.map((record) => ({
-          id: record.id,
-          employeeName: record.employee.fullName,
-          employeeEmail: record.employee.email,
-          employeeActive: record.employee.active,
-          status: record.status,
-          sentAt: record.sentAt,
-          receivedAt: record.receivedAt,
-          completedAt: record.completedAt,
-          needsSpouseForm: record.employee.needsSpouseForm,
-          spouseReceivedAt: record.spouseReceivedAt,
-          verificationResult: record.verificationResult,
-          hasUploadedFile: Boolean(record.uploadedBlobPath),
-          hasSpouseFile: Boolean(record.spouseUploadedBlobPath),
-        })),
-      })
-    );
-  });
+      const formatDate = (date: Date | null) => (date ? date.toISOString().slice(0, 10) : "");
+      const csv = buildCsv(
+        ["Employee", "Email", "Status", "Sent", "Received", "Completed", "Needs Spouse Form", "Spouse Received", "Verification Result"],
+        records.map((r) => [
+          r.employee.fullName,
+          r.employee.email,
+          r.status,
+          formatDate(r.sentAt),
+          formatDate(r.receivedAt),
+          formatDate(r.completedAt),
+          r.employee.needsSpouseForm ? "yes" : "no",
+          formatDate(r.spouseReceivedAt),
+          r.verificationResult ?? "",
+        ])
+      );
 
-  router.get("/export", requireHrAuth, async (req: Request, res: Response) => {
-    const { cycleYear, statusFilter } = cycleYearAndStatusFilter(req);
-
-    const records = await prisma.physicalRecord.findMany({
-      where: { cycleYear, ...(statusFilter ? { status: statusFilter } : {}) },
-      include: { employee: true },
-      orderBy: { createdAt: "asc" },
-    });
-
-    const formatDate = (date: Date | null) => (date ? date.toISOString().slice(0, 10) : "");
-    const csv = buildCsv(
-      ["Employee", "Email", "Status", "Sent", "Received", "Completed", "Needs Spouse Form", "Spouse Received", "Verification Result"],
-      records.map((r) => [
-        r.employee.fullName,
-        r.employee.email,
-        r.status,
-        formatDate(r.sentAt),
-        formatDate(r.receivedAt),
-        formatDate(r.completedAt),
-        r.employee.needsSpouseForm ? "yes" : "no",
-        formatDate(r.spouseReceivedAt),
-        r.verificationResult ?? "",
-      ])
-    );
-
-    res.type("text/csv").attachment(`hr-dashboard-${cycleYear}${statusFilter ? `-${statusFilter}` : ""}.csv`).send(csv);
+      res.type("text/csv").attachment(`hr-dashboard-${cycleYear}${statusFilter ? `-${statusFilter}` : ""}.csv`).send(csv);
+    } catch (err) {
+      next(err);
+    }
   });
 
   router.get("/records/:id/file", requireHrAuth, async (req: Request, res: Response, next: NextFunction) => {

@@ -79,6 +79,23 @@ describe("GET /wellness-exam/:token", () => {
     expect(res.text).toContain(`/wellness-exam/${encodeURIComponent(rawToken)}/download?lang=es`);
     expect(res.text).toContain("<form");
   });
+
+  // Regression coverage for a real production incident: this token lookup
+  // runs on every single employee-facing page load and had no try/catch, so
+  // a transient database error (Azure SQL connection reset) became an
+  // unhandled promise rejection and crashed the whole Node process — taking
+  // every other in-flight request down with it, not just this one.
+  it("returns a 500 instead of crashing the process when the token lookup fails", async () => {
+    const prisma = createFakePrisma();
+    const { rawToken } = await seedRecord(prisma, { status: "sent" });
+    prisma.physicalRecord.findUnique = async () => {
+      throw new Error("Can't reach database server");
+    };
+    const app = createApp(prisma as any, createFakeBlobStorage(), createFakeEmailSender());
+
+    const res = await request(app).get(`/wellness-exam/${rawToken}`);
+    expect(res.status).toBe(500);
+  });
 });
 
 describe("GET /wellness-exam/:token/download", () => {

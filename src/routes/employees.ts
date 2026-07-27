@@ -26,21 +26,25 @@ function toEmployeeRows(
 export function createEmployeesRouter(prisma: PrismaClient, emailSender: EmailSender, blobStorage: BlobStorage): Router {
   const router = Router();
 
-  router.get("/", requireHrAuth, async (req: Request, res: Response) => {
-    const employees = await prisma.employee.findMany({ orderBy: { fullName: "asc" } });
-    const addResult =
-      req.query.added === "added" || req.query.added === "exists" || req.query.added === "added_email_failed"
-        ? req.query.added
-        : undefined;
-    res.send(
-      renderEmployeesPage({
-        hrUser: req.session.hrUser!,
-        defaultCycleYear: new Date().getFullYear(),
-        employees: toEmployeeRows(employees),
-        addResult,
-        deleted: req.query.deleted === "1",
-      })
-    );
+  router.get("/", requireHrAuth, async (req: Request, res: Response, next: NextFunction) => {
+    try {
+      const employees = await prisma.employee.findMany({ orderBy: { fullName: "asc" } });
+      const addResult =
+        req.query.added === "added" || req.query.added === "exists" || req.query.added === "added_email_failed"
+          ? req.query.added
+          : undefined;
+      res.send(
+        renderEmployeesPage({
+          hrUser: req.session.hrUser!,
+          defaultCycleYear: new Date().getFullYear(),
+          employees: toEmployeeRows(employees),
+          addResult,
+          deleted: req.query.deleted === "1",
+        })
+      );
+    } catch (err) {
+      next(err);
+    }
   });
 
   router.get("/csv-template", requireHrAuth, (_req: Request, res: Response) => {

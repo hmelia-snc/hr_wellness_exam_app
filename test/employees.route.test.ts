@@ -36,6 +36,22 @@ describe("GET /dashboard/employees", () => {
     expect(res.text).toContain("Upload CSV");
     expect(res.text).toContain("Existing Person");
   });
+
+  // Regression coverage: this handler had no try/catch around its database
+  // call, so a real failure (e.g. a transient Azure SQL connection reset)
+  // would become an unhandled promise rejection and crash the whole process
+  // instead of just failing this one request with a 500.
+  it("returns a 500 instead of crashing the process when the database call fails", async () => {
+    const prisma = createFakePrisma();
+    prisma.employee.findMany = async () => {
+      throw new Error("Can't reach database server");
+    };
+    const app = createApp(prisma as any, createFakeBlobStorage(), createFakeEmailSender());
+    const agent = await signedInAgent(app);
+
+    const res = await agent.get("/dashboard/employees");
+    expect(res.status).toBe(500);
+  });
 });
 
 describe("GET /dashboard/employees/csv-template", () => {

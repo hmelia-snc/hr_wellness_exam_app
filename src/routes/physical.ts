@@ -59,22 +59,26 @@ export function createPhysicalRouter(
   // route-specific handler (and before multer buffers an upload body), so an
   // invalid/expired/completed token is rejected without doing further work.
   router.param("token", async (req: RequestWithRecord, res: Response, next: NextFunction, rawToken: string) => {
-    const result = await validateToken(prisma, rawToken);
-    if (result.kind === "not_found") {
-      res.status(404).send(renderBlockedPage("not_found"));
-      return;
+    try {
+      const result = await validateToken(prisma, rawToken);
+      if (result.kind === "not_found") {
+        res.status(404).send(renderBlockedPage("not_found"));
+        return;
+      }
+      if (result.kind === "expired") {
+        res.status(410).send(renderBlockedPage("expired"));
+        return;
+      }
+      if (result.kind === "completed") {
+        res.status(200).send(renderBlockedPage("completed"));
+        return;
+      }
+      req.physicalRecord = result.record;
+      req.employee = result.employee;
+      next();
+    } catch (err) {
+      next(err);
     }
-    if (result.kind === "expired") {
-      res.status(410).send(renderBlockedPage("expired"));
-      return;
-    }
-    if (result.kind === "completed") {
-      res.status(200).send(renderBlockedPage("completed"));
-      return;
-    }
-    req.physicalRecord = result.record;
-    req.employee = result.employee;
-    next();
   });
 
   router.get("/:token", (req: RequestWithRecord, res: Response) => {

@@ -51,6 +51,25 @@ describe("GET /dashboard (AUTH_MODE=mock)", () => {
     expect(res.text).toMatch(/AUTH_MODE=mock/);
   });
 
+  // Regression coverage for a real production incident: a transient database
+  // error (Azure SQL connection reset) thrown inside this route's async
+  // handler had no try/catch, so it became an unhandled promise rejection —
+  // which crashes the entire Node process by default, taking every other
+  // in-flight request down with it too. It should instead reach Express's
+  // error-handling middleware and produce a plain 500 for this one request.
+  it("returns a 500 instead of crashing the process when the database call fails", async () => {
+    const prisma = createFakePrisma();
+    prisma.physicalRecord.findMany = async () => {
+      throw new Error("Can't reach database server");
+    };
+    const app = createApp(prisma as any, createFakeBlobStorage(), createFakeEmailSender());
+    const agent = request.agent(app);
+    await agent.post("/auth/login").type("form").send({ returnTo: "/dashboard" });
+
+    const res = await agent.get("/dashboard");
+    expect(res.status).toBe(500);
+  });
+
   it("lets a dev-signed-in session see the seeded record in the status table", async () => {
     const prisma = createFakePrisma();
     await seedEmployeeAndRecord(prisma);
