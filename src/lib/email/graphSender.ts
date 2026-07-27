@@ -38,6 +38,52 @@ export class GraphEmailSender implements EmailSender {
     `;
   }
 
+  // Adapted from the company's standard CodeTwo email signature template
+  // (assets normally merge-filled per sender — {First name}, {Title},
+  // {Mobile}, etc.). These emails come from the shared app mailbox rather
+  // than an individual, so the name is fixed to "Standard HR Team" and the
+  // personal fields (title, direct/mobile/fax numbers) that have no value
+  // for a shared inbox are dropped rather than left as empty placeholders.
+  private brandFooter(): string {
+    return `
+      <table cellspacing="0" cellpadding="0" border="0" style="margin-top: 24px; font-family: Arial, sans-serif;">
+        <tbody>
+          <tr>
+            <td style="padding: 0 0 8px 0;">
+              <b style="font-family: Arial, sans-serif; color: #9A3324; font-size: 12pt;">Standard HR Team</b>
+            </td>
+          </tr>
+          <tr>
+            <td style="padding: 0 0 12px 0;">
+              <a href="https://standardnutrition.com/" title="Visit StandardNutrition.com">
+                <img src="https://shortlink.standardnutrition.com/signatures/codetwo/SNC-logo-250x90.jpg" border="0" alt="Standard Nutrition Company" width="250" height="90" style="display: block;">
+              </a>
+            </td>
+          </tr>
+          <tr>
+            <td>
+              <a href="https://www.facebook.com/StandardNutrition" title="Visit Standard Nutrition's Facebook">
+                <img src="https://shortlink.standardnutrition.com/signatures/codetwo/fb-icon.png" border="0" alt="Facebook" width="20" height="20" style="vertical-align: middle;">
+              </a>
+              &nbsp;
+              <a href="https://www.linkedin.com/company/standardnutritioncompany/" title="Visit Standard Nutrition's LinkedIn">
+                <img src="https://shortlink.standardnutrition.com/signatures/codetwo/LinkedIN-icon.png" border="0" alt="LinkedIn" width="20" height="20" style="vertical-align: middle;">
+              </a>
+              &nbsp;
+              <a href="https://standardnutrition.com/" title="Visit StandardNutrition.com">
+                <img src="https://shortlink.standardnutrition.com/signatures/codetwo/WWW-icon.png" border="0" alt="Website" width="20" height="20" style="vertical-align: middle;">
+              </a>
+              &nbsp;
+              <a href="https://standardnutrition.com/" style="font-family: Arial, sans-serif; font-size: 12px; text-decoration: none;">
+                <b style="color: #9A3324;">StandardNutrition.com</b>
+              </a>
+            </td>
+          </tr>
+        </tbody>
+      </table>
+    `;
+  }
+
   async send(email: PhysicalFormEmail): Promise<void> {
     await this.client.api(`/users/${this.senderAddress}/sendMail`).post({
       message: {
@@ -51,6 +97,7 @@ export class GraphEmailSender implements EmailSender {
               <p>Please download, complete, and upload your ${email.cycleYear} Wellness Exam
               Verification form using your personal link below:</p>
               <p><a href="${email.link}" style="color: #DA291C;">${email.link}</a></p>
+              ${this.brandFooter()}
             </div>
           `,
         },
@@ -85,6 +132,7 @@ export class GraphEmailSender implements EmailSender {
               ${this.brandHeader()}
               <p>Hi ${escapeHtml(email.toName)},</p>
               ${bodyContent}
+              ${this.brandFooter()}
             </div>
           `,
         },
