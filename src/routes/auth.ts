@@ -10,6 +10,19 @@ function safeReturnTo(value: unknown): string {
   return typeof value === "string" && value.startsWith("/") ? value : "/dashboard";
 }
 
+/**
+ * Destroying our own session isn't enough to sign a user out under Entra ID
+ * SSO: their browser still holds an active Microsoft session, so hitting
+ * /auth/login again just silently re-authenticates them without ever
+ * showing a login prompt — "Sign out" looks like it does nothing. Routing
+ * through Microsoft's own logout endpoint first (documented at
+ * https://learn.microsoft.com/entra/identity-platform/v2-protocols-oidc#send-a-sign-out-request)
+ * ends that session too, then bounces back to postLogoutRedirectUri.
+ */
+export function buildEntraLogoutUrl(tenantId: string, postLogoutRedirectUri: string): string {
+  return `https://login.microsoftonline.com/${tenantId}/oauth2/v2.0/logout?post_logout_redirect_uri=${encodeURIComponent(postLogoutRedirectUri)}`;
+}
+
 export function createAuthRouter(): Router {
   const router = Router();
   const env = getEnv();
@@ -100,6 +113,10 @@ authentication. The app refuses to start this way when NODE_ENV=production.</p>
     req.session.destroy((err) => {
       if (err) {
         next(err);
+        return;
+      }
+      if (env.AUTH_MODE === "entra") {
+        res.redirect(buildEntraLogoutUrl(env.ENTRA_TENANT_ID!, `${env.APP_BASE_URL}/auth/login`));
         return;
       }
       res.redirect("/auth/login");

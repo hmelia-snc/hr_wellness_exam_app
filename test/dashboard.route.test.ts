@@ -80,6 +80,48 @@ describe("GET /dashboard (AUTH_MODE=mock)", () => {
   });
 });
 
+describe("GET /dashboard cycle year selector", () => {
+  it("lists every year that has records plus the current calendar year, with the active year selected", async () => {
+    const prisma = createFakePrisma();
+    await seedEmployeeAndRecord(prisma, { id: "rec-2026", cycleYear: 2026 });
+    await seedEmployeeAndRecord(prisma, { id: "rec-2025", cycleYear: 2025 });
+    const app = createApp(prisma as any, createFakeBlobStorage(), createFakeEmailSender());
+    const agent = request.agent(app);
+    await agent.post("/auth/login").type("form").send({ returnTo: "/dashboard" });
+
+    const res = await agent.get("/dashboard?year=2025");
+    expect(res.status).toBe(200);
+    expect(res.text).toContain('<option value="2025" selected>2025</option>');
+    expect(res.text).toContain('<option value="2026">2026</option>');
+  });
+
+  it("switching the year selector navigates to that cycle", async () => {
+    const prisma = createFakePrisma();
+    await seedEmployeeAndRecord(prisma, { cycleYear: 2025 });
+    const app = createApp(prisma as any, createFakeBlobStorage(), createFakeEmailSender());
+    const agent = request.agent(app);
+    await agent.post("/auth/login").type("form").send({ returnTo: "/dashboard" });
+
+    const res = await agent.get("/dashboard?year=2025");
+    expect(res.text).toContain("Jane Doe");
+
+    const nextYear = await agent.get("/dashboard?year=2026");
+    expect(nextYear.text).not.toContain("Jane Doe");
+    expect(nextYear.text).toMatch(/no records for this cycle/i);
+  });
+
+  it("preserves the status filter as a hidden field when switching years", async () => {
+    const prisma = createFakePrisma();
+    await seedEmployeeAndRecord(prisma, { cycleYear: 2026, status: "needs_review" });
+    const app = createApp(prisma as any, createFakeBlobStorage(), createFakeEmailSender());
+    const agent = request.agent(app);
+    await agent.post("/auth/login").type("form").send({ returnTo: "/dashboard" });
+
+    const res = await agent.get("/dashboard?year=2026&status=needs_review");
+    expect(res.text).toContain('<input type="hidden" name="status" value="needs_review" />');
+  });
+});
+
 describe("POST /dashboard/records/:id/resend", () => {
   it("generates a fresh token, resets to sent, and redirects back preserving filters", async () => {
     const prisma = createFakePrisma();

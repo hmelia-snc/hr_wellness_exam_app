@@ -32,16 +32,25 @@ export function createDashboardRouter(prisma: PrismaClient, emailSender: EmailSe
   router.get("/", requireHrAuth, async (req: Request, res: Response) => {
     const { cycleYear, statusFilter } = cycleYearAndStatusFilter(req);
 
-    const records = await prisma.physicalRecord.findMany({
-      where: { cycleYear, ...(statusFilter ? { status: statusFilter } : {}) },
-      include: { employee: true },
-      orderBy: { createdAt: "asc" },
-    });
+    const [records, distinctYears] = await Promise.all([
+      prisma.physicalRecord.findMany({
+        where: { cycleYear, ...(statusFilter ? { status: statusFilter } : {}) },
+        include: { employee: true },
+        orderBy: { createdAt: "asc" },
+      }),
+      prisma.physicalRecord.findMany({ select: { cycleYear: true }, distinct: ["cycleYear"] }),
+    ]);
+    // Always offer the current calendar year even before any cycle has been
+    // started for it, so HR can find it in the selector to kick one off.
+    const availableYears = [...new Set([...distinctYears.map((r) => r.cycleYear), new Date().getFullYear(), cycleYear])].sort(
+      (a, b) => b - a
+    );
 
     res.send(
       renderDashboardPage({
         hrUser: req.session.hrUser!,
         cycleYear,
+        availableYears,
         statusFilter,
         resendFailed: req.query.resendFailed === "1",
         records: records.map((record) => ({

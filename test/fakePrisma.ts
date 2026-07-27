@@ -72,7 +72,7 @@ export function createFakePrisma() {
         Object.assign(record, data);
         return record;
       },
-      async findMany({ where = {}, include, orderBy }: any = {}) {
+      async findMany({ where = {}, include, orderBy, select, distinct }: any = {}) {
         let results = physicalRecords.filter((r) => {
           if (where.cycleYear !== undefined && r.cycleYear !== where.cycleYear) return false;
           if (where.status !== undefined && r.status !== where.status) return false;
@@ -84,11 +84,24 @@ export function createFakePrisma() {
         } else if (orderBy?.createdAt === "desc") {
           results = [...results].sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime());
         }
+        if (Array.isArray(distinct)) {
+          const seen = new Set<unknown>();
+          results = results.filter((r) => {
+            const key = distinct.map((field: string) => r[field]).join("|");
+            if (seen.has(key)) return false;
+            seen.add(key);
+            return true;
+          });
+        }
         if (include?.employee) {
           results = results.map((r) => ({
             ...r,
             employee: [...employeesByEmail.values()].find((e) => e.id === r.employeeId) ?? null,
           }));
+        }
+        if (select) {
+          const fields = Object.keys(select).filter((key) => select[key]);
+          results = results.map((r) => Object.fromEntries(fields.map((field) => [field, r[field]])));
         }
         return results;
       },

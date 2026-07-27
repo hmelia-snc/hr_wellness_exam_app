@@ -27,6 +27,7 @@ function progressLabel(r: Pick<DashboardRecordRow, "receivedAt" | "needsSpouseFo
 export interface DashboardPageProps {
   hrUser: HrUser;
   cycleYear: number;
+  availableYears: number[];
   statusFilter?: string;
   resendFailed?: boolean;
   records: DashboardRecordRow[];
@@ -50,6 +51,15 @@ const EXTRA_STYLES = `
   .session-line a { color: ${BRAND.red}; }
   .nav-line { margin: 0.5rem 0 1rem; }
   .nav-line a { color: ${BRAND.red}; font-weight: 500; text-decoration: none; }
+  .year-select-form { display: inline-flex; align-items: center; gap: 0.4rem; margin: 0.5rem 0 1rem 1.5rem; }
+  .year-select-form label { font-weight: 500; }
+  .year-select-form select {
+    font-family: 'Ubuntu', Arial, sans-serif;
+    font-size: 0.95rem;
+    padding: 0.3rem 0.5rem;
+    border-radius: 6px;
+    border: 1px solid #ccc;
+  }
   .small-button {
     font-family: 'Ubuntu', Arial, sans-serif;
     font-size: 0.8rem;
@@ -74,6 +84,7 @@ const EXTRA_STYLES = `
     .session-line { color: #aaa; }
     .inactive-note { color: #999; }
     .notice-error { background: ${BRAND.redTint10Dark}; color: #f5b9b4; border-color: ${BRAND.redTintBorderDark}; }
+    .year-select-form select { background: #232120; color: #ededed; border-color: #45423f; }
   }
 `;
 
@@ -142,12 +153,22 @@ export function renderDashboardPage(props: DashboardPageProps): string {
   exportQuery.set("year", String(props.cycleYear));
   if (props.statusFilter) exportQuery.set("status", props.statusFilter);
 
+  const yearOptions = props.availableYears
+    .map((y) => `<option value="${y}"${y === props.cycleYear ? " selected" : ""}>${y}</option>`)
+    .join("");
+
   const body = `
 <h1>HR Dashboard — ${props.cycleYear} Cycle</h1>
 <p class="session-line">Signed in as ${escapeHtml(props.hrUser.name)} (${escapeHtml(
     props.hrUser.email
   )}) &middot; <a href="/auth/logout">Sign out</a></p>
 <p class="nav-line"><a href="/dashboard/employees">Manage Employees →</a></p>
+<form class="year-select-form" method="get" action="/dashboard">
+  <label for="year">Cycle year</label>
+  <select id="year" name="year" onchange="this.form.submit()">${yearOptions}</select>
+  ${props.statusFilter ? `<input type="hidden" name="status" value="${escapeHtml(props.statusFilter)}" />` : ""}
+  <noscript><button type="submit">Go</button></noscript>
+</form>
 ${resendFailedNotice}
 <div class="filters">
   ${filterLink("ALL")}
