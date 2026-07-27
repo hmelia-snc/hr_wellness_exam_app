@@ -16,19 +16,20 @@ set -uo pipefail
 MAX_ATTEMPTS=5
 RETRY_DELAY_SECONDS=5
 
-# Invoke the locally installed CLI directly rather than through `npx`. Azure's
-# tar.gz-based node_modules restore doesn't reliably preserve the executable
-# bit on node_modules/.bin/prisma; when that happens `npx prisma` treats it as
-# "not installed" and silently falls back to fetching the LATEST prisma
-# (a different major version, with a much larger unrelated dependency tree)
-# from the registry — an install that alone can take minutes and blow past
-# Azure's startup probe timeout, killing the container before it ever gets to
-# retry. Running the pinned local binary directly fails fast instead, so the
-# retry loop below actually gets to do its job.
-chmod +x node_modules/.bin/prisma 2>/dev/null || true
-
+# Invoke the CLI's actual file directly with `node`, rather than through
+# `npx` or the node_modules/.bin/prisma symlink. Two separate problems ruled
+# those out: `npx prisma` falls back to silently installing the LATEST
+# prisma (a different major version, with a much larger unrelated dependency
+# tree) from the registry whenever it can't resolve a local install — an
+# install that alone can take minutes and blow past Azure's startup probe
+# timeout. And node_modules/.bin/prisma is itself a symlink, which Azure's
+# GitHub Actions zip-deploy pipeline doesn't preserve, so the symlink is
+# simply missing in the deployed container ("No such file or directory").
+# node_modules/prisma/build/index.js is a real file, not a symlink, so it
+# survives zip/unzip and this fails fast on a genuine problem instead of
+# silently doing the wrong thing.
 attempt=1
-until node_modules/.bin/prisma migrate deploy; do
+until node node_modules/prisma/build/index.js migrate deploy; do
   if [ "$attempt" -ge "$MAX_ATTEMPTS" ]; then
     echo "prisma migrate deploy failed after $MAX_ATTEMPTS attempts, giving up." >&2
     exit 1
