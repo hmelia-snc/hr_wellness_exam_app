@@ -38,6 +38,29 @@ describe("GET /dashboard/employees", () => {
   });
 });
 
+describe("GET /dashboard/employees/csv-template", () => {
+  it("requires auth", async () => {
+    const prisma = createFakePrisma();
+    const app = createApp(prisma as any, createFakeBlobStorage(), createFakeEmailSender());
+
+    const res = await request(app).get("/dashboard/employees/csv-template");
+    expect(res.status).toBe(302);
+    expect(res.headers.location).toMatch(/^\/auth\/login/);
+  });
+
+  it("downloads a CSV with the expected headers and a sample row", async () => {
+    const prisma = createFakePrisma();
+    const app = createApp(prisma as any, createFakeBlobStorage(), createFakeEmailSender());
+    const agent = await signedInAgent(app);
+
+    const res = await agent.get("/dashboard/employees/csv-template");
+    expect(res.status).toBe(200);
+    expect(res.headers["content-disposition"]).toMatch(/attachment/);
+    expect(res.headers["content-disposition"]).toMatch(/employee-roster-template\.csv/);
+    expect(res.text.split("\n")[0]).toBe("full_name,email,employee_id_external,needs_spouse_form");
+  });
+});
+
 describe("POST /dashboard/employees (add one)", () => {
   it("creates the employee, sends the email, and redirects with added=added", async () => {
     const prisma = createFakePrisma();

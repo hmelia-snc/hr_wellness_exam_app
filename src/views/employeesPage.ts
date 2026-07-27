@@ -70,6 +70,8 @@ const EXTRA_STYLES = `
   .delete-button:hover { opacity: 0.85; }
   .checkbox-field { display: flex; flex-direction: row !important; align-items: center; gap: 0.4rem; }
   .checkbox-field label { white-space: nowrap; }
+  .actions-cell { display: flex; flex-wrap: nowrap; gap: 0.4rem; white-space: nowrap; }
+  .actions-cell form { display: inline; }
   .notice-success { background: #d9f2d9; color: #1e6b1e; border: 1px solid #a9d9a9; border-radius: 6px; padding: 0.6rem 1rem; }
   .notice-error { background: ${BRAND.redTint10}; color: ${BRAND.darkRed}; border: 1px solid ${BRAND.redTintBorder}; border-radius: 6px; padding: 0.6rem 1rem; }
   .row-errors { color: ${BRAND.darkRed}; }
@@ -132,7 +134,7 @@ export function renderEmployeesPage(props: EmployeesPageProps): string {
       <td>${e.employeeIdExternal ? escapeHtml(e.employeeIdExternal) : "—"}</td>
       <td><span class="status-badge status-${e.active ? "active" : "inactive"}">${e.active ? "active" : "inactive"}</span></td>
       <td>${e.needsSpouseForm ? "Yes" : "No"}</td>
-      <td>
+      <td class="actions-cell">
         <form method="post" action="/dashboard/employees/${encodeURIComponent(e.id)}/${toggleAction}" style="display:inline">
           <button type="submit" class="small-button">${toggleLabel}</button>
         </form>
@@ -174,6 +176,7 @@ ${deletedNotice}
 
 <div class="card">
   <h2>Upload CSV</h2>
+  <p class="nav-line"><a href="/dashboard/employees/csv-template">Download CSV template →</a></p>
   <form method="post" action="/dashboard/employees/import" enctype="multipart/form-data">
     <div class="inline-fields">
       <div><label for="csv">CSV file</label><input type="file" id="csv" name="csv" accept=".csv" required /></div>
@@ -183,12 +186,14 @@ ${deletedNotice}
   </form>
 </div>
 
+<div style="overflow-x: auto;">
 <table>
   <thead>
     <tr><th>Name</th><th>Email</th><th>External ID</th><th>Status</th><th>Spouse Form</th><th></th></tr>
   </thead>
   <tbody>${rows || `<tr><td colspan="6">No employees yet.</td></tr>`}</tbody>
 </table>
+</div>
 `;
 
   return renderLayout("Manage Employees", body, { wide: true, extraStyles: EXTRA_STYLES });

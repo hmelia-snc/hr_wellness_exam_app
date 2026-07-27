@@ -75,6 +75,10 @@ function formatDate(date: Date | null): string {
   return date ? date.toISOString().slice(0, 10) : "—";
 }
 
+function filterLabel(status: string): string {
+  return status.replace(/_/g, " ").toUpperCase();
+}
+
 export function renderDashboardPage(props: DashboardPageProps): string {
   const resendQuery = new URLSearchParams();
   resendQuery.set("year", String(props.cycleYear));
@@ -110,7 +114,7 @@ export function renderDashboardPage(props: DashboardPageProps): string {
   const filterLink = (label: string, status?: string) => {
     const href = `/dashboard?year=${props.cycleYear}${status ? `&status=${status}` : ""}`;
     const isActive = (status ?? undefined) === props.statusFilter;
-    return `<a href="${href}"${isActive ? ' class="active"' : ""}>${label}</a>`;
+    return `<a href="${href}"${isActive ? ' class="active"' : ""}>${escapeHtml(label)}</a>`;
   };
 
   const resendFailedNotice = props.resendFailed
@@ -125,8 +129,8 @@ export function renderDashboardPage(props: DashboardPageProps): string {
 <p class="nav-line"><a href="/dashboard/employees">Manage Employees →</a></p>
 ${resendFailedNotice}
 <div class="filters">
-  ${filterLink("All")}
-  ${STATUSES.map((s) => filterLink(s, s)).join("")}
+  ${filterLink("ALL")}
+  ${STATUSES.map((s) => filterLink(filterLabel(s), s)).join("")}
 </div>
 <table>
   <thead>

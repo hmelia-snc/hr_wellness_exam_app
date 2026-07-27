@@ -39,7 +39,7 @@ export class GraphEmailSender implements EmailSender {
           content: `
             <div style="font-family: Arial, sans-serif; color: #2C2A29;">
               <p style="font-weight: bold; text-transform: uppercase; letter-spacing: 0.03em; border-bottom: 3px solid #DA291C; padding-bottom: 0.5rem;">
-                Standard Nutrition <span style="color: #DA291C;">Company</span>
+                Standard Nutrition Company
               </p>
               <p>Hi ${escapeHtml(email.toName)},</p>
               <p>Please download, complete, and upload your ${email.cycleYear} annual physical
