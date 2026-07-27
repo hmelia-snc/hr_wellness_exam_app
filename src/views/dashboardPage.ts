@@ -169,7 +169,7 @@ export function renderDashboardPage(props: DashboardPageProps): string {
             : `<span class="inactive-note">Employee inactive</span>`
         }
         ${
-          r.status === "needs_review"
+          r.employeeActive && r.status === "needs_review"
             ? `<button type="submit" formaction="/dashboard/records/${encodeURIComponent(r.id)}/approve?${qs}" formmethod="post" class="small-button">Approve</button>`
             : ""
         }

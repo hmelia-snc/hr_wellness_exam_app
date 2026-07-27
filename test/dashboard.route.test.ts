@@ -204,6 +204,28 @@ describe("POST /dashboard/records/:id/resend", () => {
     expect(res.text).not.toContain(`openRejectModal(${JSON.stringify([record.id])}`);
     expect(res.text).toMatch(new RegExp(`value="${record.id}"[^>]*disabled`));
   });
+
+  // Regression coverage: the button is hidden client-side, but that's not
+  // enforcement — a direct POST to this route for an inactive employee's
+  // record must not send an email or touch the token either.
+  it("does not resend or modify the record when the employee is inactive, even via a direct POST", async () => {
+    const prisma = createFakePrisma();
+    const emailSender = createFakeEmailSender();
+    const { record } = await seedEmployeeAndRecord(prisma, { tokenHash: "original-hash" });
+    prisma._state.employeesByEmail.get("jane.doe@example.com").active = false;
+    const app = createApp(prisma as any, createFakeBlobStorage(), emailSender);
+    const agent = request.agent(app);
+    await agent.post("/auth/login").type("form").send({ returnTo: "/dashboard" });
+
+    const res = await agent.post(`/dashboard/records/${record.id}/resend?year=2026`);
+    expect(res.status).toBe(303);
+    expect(res.headers.location).toBe("/dashboard?year=2026");
+
+    const updated = prisma._state.physicalRecords.find((r: any) => r.id === record.id);
+    expect(updated.tokenHash).toBe("original-hash");
+    expect(updated.status).toBe("sent");
+    expect(emailSender.sent).toHaveLength(0);
+  });
 });
 
 describe("POST /dashboard/records/:id/link", () => {
@@ -284,6 +306,25 @@ describe("POST /dashboard/records/:id/link", () => {
     expect(updated.tokenHash).not.toBe("expired-token-hash");
   });
 
+  it("does not show or regenerate the link when the employee is inactive, even via a direct POST", async () => {
+    const prisma = createFakePrisma();
+    const { record } = await seedEmployeeAndRecord(prisma, {
+      rawToken: "existing-raw-token",
+      tokenHash: "existing-token-hash",
+    });
+    prisma._state.employeesByEmail.get("jane.doe@example.com").active = false;
+    const app = createApp(prisma as any, createFakeBlobStorage(), createFakeEmailSender());
+    const agent = request.agent(app);
+    await agent.post("/auth/login").type("form").send({ returnTo: "/dashboard" });
+
+    const res = await agent.post(`/dashboard/records/${record.id}/link?year=2026`);
+    expect(res.status).toBe(303);
+    expect(res.headers.location).toBe("/dashboard?year=2026");
+
+    const updated = prisma._state.physicalRecords.find((r: any) => r.id === record.id);
+    expect(updated.tokenHash).toBe("existing-token-hash");
+  });
+
   it("requires auth", async () => {
     const prisma = createFakePrisma();
     const { record } = await seedEmployeeAndRecord(prisma);
@@ -341,6 +382,26 @@ describe("POST /dashboard/records/:id/approve", () => {
     const res = await agent.get("/dashboard?year=2026");
     expect(res.text).toContain("/approve?");
     expect(res.text).toContain('title="No handwritten signature detected');
+  });
+
+  it("hides the Approve button and does not approve when the employee is inactive, even via a direct POST", async () => {
+    const prisma = createFakePrisma();
+    const { record } = await seedEmployeeAndRecord(prisma, { status: "needs_review" });
+    prisma._state.employeesByEmail.get("jane.doe@example.com").active = false;
+    const app = createApp(prisma as any, createFakeBlobStorage(), createFakeEmailSender());
+    const agent = request.agent(app);
+    await agent.post("/auth/login").type("form").send({ returnTo: "/dashboard" });
+
+    const page = await agent.get("/dashboard?year=2026");
+    expect(page.text).not.toContain(`records/${record.id}/approve?`);
+
+    const res = await agent.post(`/dashboard/records/${record.id}/approve?year=2026`);
+    expect(res.status).toBe(303);
+    expect(res.headers.location).toBe("/dashboard?year=2026");
+
+    const updated = prisma._state.physicalRecords.find((r: any) => r.id === record.id);
+    expect(updated.status).toBe("needs_review");
+    expect(updated.reviewedBy).toBeUndefined();
   });
 });
 
@@ -434,6 +495,28 @@ describe("POST /dashboard/records/:id/reject", () => {
 
     const res = await agent.get("/dashboard?year=2026");
     expect(res.text).toContain("openRejectModal");
+  });
+
+  it("does not reject or email when the employee is inactive, even via a direct POST", async () => {
+    const prisma = createFakePrisma();
+    const emailSender = createFakeEmailSender();
+    const { record } = await seedEmployeeAndRecord(prisma, { status: "received" });
+    prisma._state.employeesByEmail.get("jane.doe@example.com").active = false;
+    const app = createApp(prisma as any, createFakeBlobStorage(), emailSender);
+    const agent = request.agent(app);
+    await agent.post("/auth/login").type("form").send({ returnTo: "/dashboard" });
+
+    const res = await agent
+      .post(`/dashboard/records/${record.id}/reject?year=2026`)
+      .type("form")
+      .send({ reason: "Missing signature." });
+    expect(res.status).toBe(303);
+    expect(res.headers.location).toBe("/dashboard?year=2026");
+
+    const updated = prisma._state.physicalRecords.find((r: any) => r.id === record.id);
+    expect(updated.status).toBe("received");
+    expect(updated.rejectionReason).toBeUndefined();
+    expect(emailSender.rejectionsSent).toHaveLength(0);
   });
 });
 

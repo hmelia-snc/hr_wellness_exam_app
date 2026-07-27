@@ -36,11 +36,13 @@ function queryNumber(value: unknown): number | undefined {
   return Number.isFinite(n) ? n : undefined;
 }
 
-// The dashboard already hides (and disables the checkbox for) Resend/Reject
-// on inactive employees, but that's client-side only — a bulk request could
-// still include one directly. Since these actions email the employee and/or
-// regenerate their token, re-check server-side rather than trusting the
-// client to have honored the disabled checkbox.
+// The dashboard already hides the Resend/Get Link/Reject buttons (and
+// disables the bulk-select checkbox) for inactive employees, but that's
+// client-side only — a crafted direct POST, or a bulk request, could still
+// hit one of these routes for an inactive employee's record. Since these
+// actions email the employee and/or regenerate their token, re-check
+// server-side rather than trusting the client to have honored the hidden
+// button / disabled checkbox.
 async function isRecordsEmployeeActive(prisma: PrismaClient, physicalRecordId: string): Promise<boolean> {
   const record = await prisma.physicalRecord.findUnique({ where: { id: physicalRecordId } });
   if (!record) return false;
@@ -187,6 +189,10 @@ export function createDashboardRouter(prisma: PrismaClient, emailSender: EmailSe
 
   router.post("/records/:id/resend", requireHrAuth, async (req: Request, res: Response, next: NextFunction) => {
     try {
+      if (!(await isRecordsEmployeeActive(prisma, req.params.id))) {
+        res.redirect(303, backToDashboardHref(req));
+        return;
+      }
       const result = await resendLink(prisma, emailSender, req.params.id);
       res.redirect(303, backToDashboardHref(req, result.emailSent ? {} : { resendFailed: "1" }));
     } catch (err) {
@@ -196,6 +202,10 @@ export function createDashboardRouter(prisma: PrismaClient, emailSender: EmailSe
 
   router.post("/records/:id/approve", requireHrAuth, async (req: Request, res: Response, next: NextFunction) => {
     try {
+      if (!(await isRecordsEmployeeActive(prisma, req.params.id))) {
+        res.redirect(303, backToDashboardHref(req));
+        return;
+      }
       await approveRecord(prisma, req.params.id, req.session.hrUser!.email);
       res.redirect(303, backToDashboardHref(req));
     } catch (err) {
@@ -205,6 +215,10 @@ export function createDashboardRouter(prisma: PrismaClient, emailSender: EmailSe
 
   router.post("/records/:id/reject", requireHrAuth, async (req: Request, res: Response, next: NextFunction) => {
     try {
+      if (!(await isRecordsEmployeeActive(prisma, req.params.id))) {
+        res.redirect(303, backToDashboardHref(req));
+        return;
+      }
       const reason = typeof req.body?.reason === "string" ? req.body.reason.trim() : "";
       if (!reason) {
         res.status(400).send("A rejection reason is required.");
@@ -219,6 +233,10 @@ export function createDashboardRouter(prisma: PrismaClient, emailSender: EmailSe
 
   router.post("/records/:id/link", requireHrAuth, async (req: Request, res: Response, next: NextFunction) => {
     try {
+      if (!(await isRecordsEmployeeActive(prisma, req.params.id))) {
+        res.redirect(303, backToDashboardHref(req));
+        return;
+      }
       const result = await getShareableLink(prisma, req.params.id);
       res.send(
         renderShareableLinkPage({
