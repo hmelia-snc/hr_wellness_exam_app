@@ -4,7 +4,10 @@ import { requireHrAuth } from "../lib/auth.js";
 import { renderDashboardPage } from "../views/dashboardPage.js";
 import { renderShareableLinkPage } from "../views/shareableLinkPage.js";
 import type { EmailSender } from "../lib/email/types.js";
+import type { BlobStorage } from "../lib/blobStorage.js";
 import { resendLink, generateShareableLink } from "../services/employeeActions.js";
+import { recordFileAccess } from "../services/fileAccessLog.js";
+import { buildCsv } from "../lib/csv.js";
 
 function backToDashboardHref(req: Request, extra: Record<string, string> = {}): string {
   const year = typeof req.query.year === "string" ? req.query.year : undefined;
@@ -17,12 +20,17 @@ function backToDashboardHref(req: Request, extra: Record<string, string> = {}): 
   return `/dashboard${qs ? `?${qs}` : ""}`;
 }
 
-export function createDashboardRouter(prisma: PrismaClient, emailSender: EmailSender): Router {
+function cycleYearAndStatusFilter(req: Request): { cycleYear: number; statusFilter?: string } {
+  const cycleYear = Number(req.query.year) || new Date().getFullYear();
+  const statusFilter = typeof req.query.status === "string" ? req.query.status : undefined;
+  return { cycleYear, statusFilter };
+}
+
+export function createDashboardRouter(prisma: PrismaClient, emailSender: EmailSender, blobStorage: BlobStorage): Router {
   const router = Router();
 
   router.get("/", requireHrAuth, async (req: Request, res: Response) => {
-    const cycleYear = Number(req.query.year) || new Date().getFullYear();
-    const statusFilter = typeof req.query.status === "string" ? req.query.status : undefined;
+    const { cycleYear, statusFilter } = cycleYearAndStatusFilter(req);
 
     const records = await prisma.physicalRecord.findMany({
       where: { cycleYear, ...(statusFilter ? { status: statusFilter } : {}) },
@@ -48,9 +56,73 @@ export function createDashboardRouter(prisma: PrismaClient, emailSender: EmailSe
           needsSpouseForm: record.employee.needsSpouseForm,
           spouseReceivedAt: record.spouseReceivedAt,
           verificationResult: record.verificationResult,
+          hasUploadedFile: Boolean(record.uploadedBlobPath),
+          hasSpouseFile: Boolean(record.spouseUploadedBlobPath),
         })),
       })
     );
+  });
+
+  router.get("/export", requireHrAuth, async (req: Request, res: Response) => {
+    const { cycleYear, statusFilter } = cycleYearAndStatusFilter(req);
+
+    const records = await prisma.physicalRecord.findMany({
+      where: { cycleYear, ...(statusFilter ? { status: statusFilter } : {}) },
+      include: { employee: true },
+      orderBy: { createdAt: "asc" },
+    });
+
+    const formatDate = (date: Date | null) => (date ? date.toISOString().slice(0, 10) : "");
+    const csv = buildCsv(
+      ["Employee", "Email", "Status", "Sent", "Received", "Completed", "Needs Spouse Form", "Spouse Received", "Verification Result"],
+      records.map((r) => [
+        r.employee.fullName,
+        r.employee.email,
+        r.status,
+        formatDate(r.sentAt),
+        formatDate(r.receivedAt),
+        formatDate(r.completedAt),
+        r.employee.needsSpouseForm ? "yes" : "no",
+        formatDate(r.spouseReceivedAt),
+        r.verificationResult ?? "",
+      ])
+    );
+
+    res.type("text/csv").attachment(`hr-dashboard-${cycleYear}${statusFilter ? `-${statusFilter}` : ""}.csv`).send(csv);
+  });
+
+  router.get("/records/:id/file", requireHrAuth, async (req: Request, res: Response, next: NextFunction) => {
+    try {
+      const record = await prisma.physicalRecord.findUnique({ where: { id: req.params.id } });
+      if (!record?.uploadedBlobPath) {
+        res.status(404).send("No uploaded file for this record.");
+        return;
+      }
+      const buffer = await blobStorage.downloadForm(record.uploadedBlobPath);
+      await recordFileAccess(prisma, record.id, "employee", req.session.hrUser!.email);
+      res.setHeader("Content-Type", record.uploadedContentType ?? "application/octet-stream");
+      res.setHeader("Content-Disposition", "inline");
+      res.send(buffer);
+    } catch (err) {
+      next(err);
+    }
+  });
+
+  router.get("/records/:id/spouse-file", requireHrAuth, async (req: Request, res: Response, next: NextFunction) => {
+    try {
+      const record = await prisma.physicalRecord.findUnique({ where: { id: req.params.id } });
+      if (!record?.spouseUploadedBlobPath) {
+        res.status(404).send("No uploaded spouse file for this record.");
+        return;
+      }
+      const buffer = await blobStorage.downloadForm(record.spouseUploadedBlobPath);
+      await recordFileAccess(prisma, record.id, "spouse", req.session.hrUser!.email);
+      res.setHeader("Content-Type", record.spouseUploadedContentType ?? "application/octet-stream");
+      res.setHeader("Content-Disposition", "inline");
+      res.send(buffer);
+    } catch (err) {
+      next(err);
+    }
   });
 
   router.post("/records/:id/resend", requireHrAuth, async (req: Request, res: Response, next: NextFunction) => {

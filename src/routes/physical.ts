@@ -8,6 +8,7 @@ import { renderPhysicalPage, renderBlockedPage, type PhysicalPageStatus } from "
 import type { BlobStorage } from "../lib/blobStorage.js";
 import type { FormVerifier } from "../lib/verification/types.js";
 import { verifyPhysicalRecord } from "../services/verifyRecord.js";
+import { recordFileAccess } from "../services/fileAccessLog.js";
 import { getEnv } from "../config/env.js";
 
 interface RequestWithRecord extends Request {
@@ -96,6 +97,7 @@ export function createPhysicalRouter(prisma: PrismaClient, blobStorage: BlobStor
         return;
       }
       const buffer = await blobStorage.downloadForm(record.uploadedBlobPath);
+      await recordFileAccess(prisma, record.id, "employee", req.employee!.email);
       res.setHeader("Content-Type", record.uploadedContentType ?? "application/octet-stream");
       res.setHeader("Content-Disposition", "inline");
       res.send(buffer);

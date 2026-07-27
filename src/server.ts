@@ -63,7 +63,7 @@ export function createApp(
 
   app.use("/physical", physicalLimiter, createPhysicalRouter(prisma, blobStorage, formVerifier));
   app.use("/auth", createAuthRouter());
-  app.use("/dashboard", createDashboardRouter(prisma, emailSender));
+  app.use("/dashboard", createDashboardRouter(prisma, emailSender, blobStorage));
   app.use("/dashboard/employees", createEmployeesRouter(prisma, emailSender, blobStorage));
 
   app.use((err: unknown, _req: Request, res: Response, _next: NextFunction) => {

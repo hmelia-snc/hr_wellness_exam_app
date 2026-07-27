@@ -268,3 +268,162 @@ describe("GET /dashboard progress column", () => {
     expect(res.text).toContain("2 of 2");
   });
 });
+
+describe("GET /dashboard/records/:id/file", () => {
+  it("streams the employee's uploaded file and logs who viewed it", async () => {
+    const prisma = createFakePrisma();
+    const blobStorage = createFakeBlobStorage();
+    const blobPath = "uploads/2026/rec-1/signed.pdf";
+    await blobStorage.uploadForm(Buffer.from("%PDF-1.4 fake content"), blobPath, "application/pdf");
+    const { record } = await seedEmployeeAndRecord(prisma, {
+      uploadedBlobPath: blobPath,
+      uploadedContentType: "application/pdf",
+    });
+    const app = createApp(prisma as any, blobStorage, createFakeEmailSender());
+    const agent = request.agent(app);
+    await agent.post("/auth/login").type("form").send({ returnTo: "/dashboard" });
+
+    const res = await agent.get(`/dashboard/records/${record.id}/file`);
+    expect(res.status).toBe(200);
+    expect(res.headers["content-type"]).toBe("application/pdf");
+    expect(res.headers["content-disposition"]).toBe("inline");
+
+    expect(prisma._state.fileAccessLogs).toHaveLength(1);
+    expect(prisma._state.fileAccessLogs[0]).toMatchObject({
+      physicalRecordId: record.id,
+      fileType: "employee",
+      viewedBy: "dev-hr@standardnutrition.com",
+    });
+  });
+
+  it("404s when there's no uploaded file yet", async () => {
+    const prisma = createFakePrisma();
+    const { record } = await seedEmployeeAndRecord(prisma);
+    const app = createApp(prisma as any, createFakeBlobStorage(), createFakeEmailSender());
+    const agent = request.agent(app);
+    await agent.post("/auth/login").type("form").send({ returnTo: "/dashboard" });
+
+    const res = await agent.get(`/dashboard/records/${record.id}/file`);
+    expect(res.status).toBe(404);
+    expect(prisma._state.fileAccessLogs).toHaveLength(0);
+  });
+
+  it("requires auth", async () => {
+    const prisma = createFakePrisma();
+    const { record } = await seedEmployeeAndRecord(prisma);
+    const app = createApp(prisma as any, createFakeBlobStorage(), createFakeEmailSender());
+
+    const res = await request(app).get(`/dashboard/records/${record.id}/file`);
+    expect(res.status).toBe(302);
+    expect(res.headers.location).toMatch(/^\/auth\/login/);
+  });
+});
+
+describe("GET /dashboard/records/:id/spouse-file", () => {
+  it("streams the spouse's uploaded file and logs it separately from the employee's", async () => {
+    const prisma = createFakePrisma();
+    const blobStorage = createFakeBlobStorage();
+    const spouseBlobPath = "uploads/2026/rec-1/spouse-signed.pdf";
+    await blobStorage.uploadForm(Buffer.from("%PDF-1.4 spouse content"), spouseBlobPath, "application/pdf");
+    const { record } = await seedEmployeeAndRecord(
+      prisma,
+      { spouseUploadedBlobPath: spouseBlobPath, spouseUploadedContentType: "application/pdf" },
+      { needsSpouseForm: true }
+    );
+    const app = createApp(prisma as any, blobStorage, createFakeEmailSender());
+    const agent = request.agent(app);
+    await agent.post("/auth/login").type("form").send({ returnTo: "/dashboard" });
+
+    const res = await agent.get(`/dashboard/records/${record.id}/spouse-file`);
+    expect(res.status).toBe(200);
+    expect(res.headers["content-type"]).toBe("application/pdf");
+
+    expect(prisma._state.fileAccessLogs).toHaveLength(1);
+    expect(prisma._state.fileAccessLogs[0].fileType).toBe("spouse");
+  });
+
+  it("404s when there's no spouse file", async () => {
+    const prisma = createFakePrisma();
+    const { record } = await seedEmployeeAndRecord(prisma);
+    const app = createApp(prisma as any, createFakeBlobStorage(), createFakeEmailSender());
+    const agent = request.agent(app);
+    await agent.post("/auth/login").type("form").send({ returnTo: "/dashboard" });
+
+    const res = await agent.get(`/dashboard/records/${record.id}/spouse-file`);
+    expect(res.status).toBe(404);
+  });
+});
+
+describe("Dashboard view-file links", () => {
+  it("shows View file / View spouse file links only when those files exist", async () => {
+    const prisma = createFakePrisma();
+    await seedEmployeeAndRecord(
+      prisma,
+      { uploadedBlobPath: "uploads/2026/rec-1/signed.pdf", spouseUploadedBlobPath: "uploads/2026/rec-1/spouse.pdf" },
+      { needsSpouseForm: true }
+    );
+    const app = createApp(prisma as any, createFakeBlobStorage(), createFakeEmailSender());
+    const agent = request.agent(app);
+    await agent.post("/auth/login").type("form").send({ returnTo: "/dashboard" });
+
+    const res = await agent.get("/dashboard?year=2026");
+    expect(res.text).toContain("/dashboard/records/rec-1/file");
+    expect(res.text).toContain("/dashboard/records/rec-1/spouse-file");
+  });
+
+  it("hides both view-file links when no files have been uploaded", async () => {
+    const prisma = createFakePrisma();
+    await seedEmployeeAndRecord(prisma);
+    const app = createApp(prisma as any, createFakeBlobStorage(), createFakeEmailSender());
+    const agent = request.agent(app);
+    await agent.post("/auth/login").type("form").send({ returnTo: "/dashboard" });
+
+    const res = await agent.get("/dashboard?year=2026");
+    expect(res.text).not.toContain("View file");
+    expect(res.text).not.toContain("View spouse file");
+  });
+});
+
+describe("GET /dashboard/export", () => {
+  it("requires auth", async () => {
+    const prisma = createFakePrisma();
+    const app = createApp(prisma as any, createFakeBlobStorage(), createFakeEmailSender());
+
+    const res = await request(app).get("/dashboard/export?year=2026");
+    expect(res.status).toBe(302);
+    expect(res.headers.location).toMatch(/^\/auth\/login/);
+  });
+
+  it("exports the current cycle's records as a CSV attachment", async () => {
+    const prisma = createFakePrisma();
+    await seedEmployeeAndRecord(prisma, { status: "completed", receivedAt: new Date(), completedAt: new Date() });
+    const app = createApp(prisma as any, createFakeBlobStorage(), createFakeEmailSender());
+    const agent = request.agent(app);
+    await agent.post("/auth/login").type("form").send({ returnTo: "/dashboard" });
+
+    const res = await agent.get("/dashboard/export?year=2026");
+    expect(res.status).toBe(200);
+    expect(res.headers["content-type"]).toMatch(/text\/csv/);
+    expect(res.headers["content-disposition"]).toMatch(/attachment/);
+    expect(res.headers["content-disposition"]).toMatch(/hr-dashboard-2026\.csv/);
+
+    const lines = res.text.trim().split("\n");
+    expect(lines[0]).toBe("Employee,Email,Status,Sent,Received,Completed,Needs Spouse Form,Spouse Received,Verification Result");
+    expect(lines[1]).toContain("Jane Doe");
+    expect(lines[1]).toContain("jane.doe@example.com");
+    expect(lines[1]).toContain("completed");
+  });
+
+  it("respects the status filter and names the file accordingly", async () => {
+    const prisma = createFakePrisma();
+    await seedEmployeeAndRecord(prisma, { status: "needs_review" });
+    const app = createApp(prisma as any, createFakeBlobStorage(), createFakeEmailSender());
+    const agent = request.agent(app);
+    await agent.post("/auth/login").type("form").send({ returnTo: "/dashboard" });
+
+    const res = await agent.get("/dashboard/export?year=2026&status=sent");
+    expect(res.headers["content-disposition"]).toMatch(/hr-dashboard-2026-sent\.csv/);
+    const lines = res.text.trim().split("\n");
+    expect(lines).toHaveLength(1); // header only — the seeded record is needs_review, not sent
+  });
+});

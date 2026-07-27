@@ -146,20 +146,38 @@ HR Dashboard link).
 Uploaded forms are automatically checked via Azure AI Document Intelligence
 (`VERIFICATION_MODE=azure`, set by the provisioning script): the employee's
 upload gets OCR'd with the prebuilt "read" model right after it lands, and
-the record auto-transitions to `completed` or `needs_review` based on two
-presence checks — is there enough readable text to not be a blank/corrupt
-scan, and is there detectable handwritten content (a proxy for "was this
-actually signed," not real signature verification). This runs
-fire-and-forget after the employee's upload request already got its
-response, so OCR latency (a few seconds) never makes them wait.
+the record auto-transitions to `completed` or `needs_review` based on three
+presence checks (`src/lib/verification/azureVerifier.ts`):
 
-This is v1 scope deliberately: presence checks, not per-field extraction
-(no validation that the *name* on the form matches the employee, or that the
-*date* falls in the right cycle year). False positives/negatives are
-expected — a `needs_review` record shows the reason as a tooltip on its
-status badge on the dashboard, and HR can resolve it with the **Approve**
-button (stamps `reviewedBy`/`reviewedAt` with the signed-in HR user) without
-needing to make the employee re-upload.
+1. **Correct form** — the OCR'd text contains a recognizable heading from
+   the actual Wellness Exam Verification Form (English or Spanish).
+2. **Date populated** — a filled-in date pattern is present, ignoring the
+   form's own printed instructional date range ("*must be between
+   1/1/26-12/31/26"), which would otherwise make even a blank upload look
+   like it had a date.
+3. **Signature present** — a contiguous handwritten-style span of at least
+   3 characters was detected (a proxy for "was this actually signed," not
+   real signature verification). Single-character noise — e.g. a stray
+   character from the unfilled date field's underscore/slash placeholder
+   getting misread as handwritten — is filtered out; a genuine signature is
+   virtually always more than a couple characters.
+
+All three are heuristics confirmed against a real Document Intelligence call
+on the actual blank template (not just unit tests) — that live smoke test is
+in fact what caught both the instructional-date-range and single-character
+noise false positives above before they shipped. False positives/negatives
+are still expected in general use, though: a `needs_review` record shows the
+specific failing reason(s) as a tooltip on its status badge on the
+dashboard, and HR can resolve it with the **Approve** button (stamps
+`reviewedBy`/`reviewedAt` with the signed-in HR user) without needing to
+make the employee re-upload — or open the uploaded file directly from the
+dashboard's **View file** link to judge it themselves first.
+
+This runs fire-and-forget after the employee's upload request already got
+its response, so OCR latency (a few seconds) never makes them wait. It's
+still v1 scope deliberately: presence checks, not per-field extraction (no
+validation that the *name* on the form matches the employee, or that the
+*date* falls within the right cycle year).
 
 Local dev defaults to `VERIFICATION_MODE=mock` (`src/lib/verification/mockVerifier.ts`):
 every upload auto-passes with no real OCR call, so the full dashboard flow
@@ -167,6 +185,32 @@ still works without needing Document Intelligence credentials. Real Azure
 verification needs `DOCUMENT_INTELLIGENCE_ENDPOINT`/`DOCUMENT_INTELLIGENCE_KEY`,
 which the provisioning script generates automatically (F0 free tier: 500
 pages/month, well above what one company's annual physical cycle needs).
+
+## File access audit log and CSV export
+
+Every time an uploaded form is viewed — HR opening it from the dashboard's
+**View file**/**View spouse file** links, or the employee viewing their own
+upload on their `/physical/:token` page — a row is written to the
+`file_access_logs` table (`src/services/fileAccessLog.ts`): who viewed it
+and when. There's no UI to browse this yet; query the table directly if an
+audit trail is ever needed. It's deliberately not foreign-keyed to
+`physical_records`, so the trail survives even a full employee purge
+(`deleteEmployee`) rather than being deleted along with it.
+
+The dashboard's **Export CSV** link (`GET /dashboard/export`) downloads the
+currently-filtered status table (respecting the `year`/`status` query
+params) as a CSV, including the verification result column.
+
+## Layout fix: `wide` pages were silently capped at 640px
+
+Found while working on the roster table: `body` had `max-width: 640px` and
+`main.wide` had `max-width: 960px`, but since `main` is a block child of
+`body`, its own larger max-width could never actually take effect — a
+child's max-width can only shrink it below its containing block's width,
+never grow past it. Every "wide" page (the HR dashboard, Manage Employees)
+had been silently rendering at 640px this whole time. Fixed by moving the
+width/centering styles from `body` onto `main` directly
+(`src/views/layout.ts`).
 
 ## Known limitations to revisit before real production traffic
 

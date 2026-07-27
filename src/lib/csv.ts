@@ -93,3 +93,12 @@ export function parseEmployeeCsv(csvContent: string): CsvParseResult {
 
   return { rows, errors };
 }
+
+/** Wraps in quotes (doubling any embedded quote) whenever a value contains a comma, quote, or newline. */
+export function csvField(value: string): string {
+  return /[",\n]/.test(value) ? `"${value.replace(/"/g, '""')}"` : value;
+}
+
+export function buildCsv(headers: string[], rows: string[][]): string {
+  return [headers, ...rows].map((row) => row.map(csvField).join(",")).join("\n") + "\n";
+}

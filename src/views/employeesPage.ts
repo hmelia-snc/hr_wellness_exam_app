@@ -30,6 +30,19 @@ const EXTRA_STYLES = `
   .status-badge { display: inline-block; padding: 0.15rem 0.6rem; border-radius: 999px; font-size: 0.8rem; font-weight: 500; }
   .status-active { background: #d9f2d9; color: #1e6b1e; }
   .status-inactive { background: #eaeaea; color: #555; }
+  .spouse-toggle {
+    display: inline-block;
+    padding: 0.15rem 0.6rem;
+    border-radius: 999px;
+    font-size: 0.8rem;
+    font-weight: 500;
+    font-family: 'Ubuntu', Arial, sans-serif;
+    border: none;
+    cursor: pointer;
+  }
+  .spouse-toggle-yes { background: #d9f2d9; color: #1e6b1e; }
+  .spouse-toggle-no { background: #eaeaea; color: #555; }
+  .spouse-toggle:hover { opacity: 0.8; }
   .nav-line { margin: 0.5rem 0 1rem; }
   .nav-line a { color: ${BRAND.red}; font-weight: 500; text-decoration: none; }
   .session-line { color: #666; font-size: 0.9rem; }
@@ -124,7 +137,7 @@ export function renderEmployeesPage(props: EmployeesPageProps): string {
     .map((e) => {
       const toggleAction = e.active ? "deactivate" : "reactivate";
       const toggleLabel = e.active ? "Deactivate" : "Reactivate";
-      const spouseToggleLabel = e.needsSpouseForm ? "Remove spouse form" : "Add spouse form";
+      const spouseToggleTitle = e.needsSpouseForm ? "Click to remove the spouse form requirement" : "Click to add a spouse form requirement";
       const confirmMessage = `Permanently delete ${e.fullName}? This cannot be undone.`;
       const confirmAttr = escapeHtml(JSON.stringify(confirmMessage));
       return `
@@ -133,13 +146,14 @@ export function renderEmployeesPage(props: EmployeesPageProps): string {
       <td>${escapeHtml(e.email)}</td>
       <td>${e.employeeIdExternal ? escapeHtml(e.employeeIdExternal) : "—"}</td>
       <td><span class="status-badge status-${e.active ? "active" : "inactive"}">${e.active ? "active" : "inactive"}</span></td>
-      <td>${e.needsSpouseForm ? "Yes" : "No"}</td>
+      <td>
+        <form method="post" action="/dashboard/employees/${encodeURIComponent(e.id)}/toggle-spouse-form" style="display:inline" title="${escapeHtml(spouseToggleTitle)}">
+          <button type="submit" class="spouse-toggle spouse-toggle-${e.needsSpouseForm ? "yes" : "no"}">${e.needsSpouseForm ? "Yes" : "No"}</button>
+        </form>
+      </td>
       <td class="actions-cell">
         <form method="post" action="/dashboard/employees/${encodeURIComponent(e.id)}/${toggleAction}" style="display:inline">
           <button type="submit" class="small-button">${toggleLabel}</button>
-        </form>
-        <form method="post" action="/dashboard/employees/${encodeURIComponent(e.id)}/toggle-spouse-form" style="display:inline">
-          <button type="submit" class="small-button">${spouseToggleLabel}</button>
         </form>
         <form method="post" action="/dashboard/employees/${encodeURIComponent(e.id)}/delete" style="display:inline" onsubmit="return confirm(${confirmAttr})">
           <button type="submit" class="delete-button">Delete</button>

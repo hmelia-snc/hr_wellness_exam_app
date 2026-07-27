@@ -9,6 +9,7 @@ export function createFakePrisma() {
   const employeesByEmail = new Map<string, any>();
   const physicalRecords: any[] = [];
   const uploadBatches: any[] = [];
+  const fileAccessLogs: any[] = [];
 
   return {
     employee: {
@@ -107,7 +108,14 @@ export function createFakePrisma() {
         return batch;
       },
     },
-    _state: { employeesByEmail, physicalRecords, uploadBatches },
+    fileAccessLog: {
+      async create({ data }: any) {
+        const log = { id: randomUUID(), viewedAt: new Date(), ...data };
+        fileAccessLogs.push(log);
+        return log;
+      },
+    },
+    _state: { employeesByEmail, physicalRecords, uploadBatches, fileAccessLogs },
   };
 }
 

@@ -21,11 +21,16 @@ const BASE_STYLES = `
   :root { color-scheme: light dark; }
   body {
     font-family: 'Ubuntu', Arial, sans-serif;
+    margin: 0;
+    color: ${BRAND.black};
+    background: #ffffff;
+  }
+  main {
+    display: block;
     max-width: 640px;
     margin: 3rem auto;
     padding: 0 1rem;
-    color: ${BRAND.black};
-    background: #ffffff;
+    box-sizing: border-box;
   }
   main.wide { max-width: 960px; }
   .brand-header {

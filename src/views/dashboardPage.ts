@@ -14,6 +14,8 @@ export interface DashboardRecordRow {
   needsSpouseForm: boolean;
   spouseReceivedAt: Date | null;
   verificationResult: string | null;
+  hasUploadedFile: boolean;
+  hasSpouseFile: boolean;
 }
 
 function progressLabel(r: Pick<DashboardRecordRow, "receivedAt" | "needsSpouseForm" | "spouseReceivedAt">): string {
@@ -62,6 +64,9 @@ const EXTRA_STYLES = `
   .actions-cell { display: flex; gap: 0.4rem; }
   .actions-cell form { display: inline; }
   .inactive-note { color: #888; font-size: 0.8rem; font-style: italic; }
+  .file-link { display: block; font-size: 0.75rem; color: ${BRAND.red}; text-decoration: none; margin-top: 0.15rem; }
+  .file-link:hover { text-decoration: underline; }
+  .export-link { color: ${BRAND.red}; font-weight: 500; text-decoration: none; font-size: 0.9rem; }
   .notice-error { background: ${BRAND.redTint10}; color: ${BRAND.darkRed}; border: 1px solid ${BRAND.redTintBorder}; border-radius: 6px; padding: 0.6rem 1rem; margin-bottom: 1rem; }
   @media (prefers-color-scheme: dark) {
     th, td { border-bottom-color: #3a3836; }
@@ -92,7 +97,11 @@ export function renderDashboardPage(props: DashboardPageProps): string {
       <td>${escapeHtml(r.employeeName)}</td>
       <td>${escapeHtml(r.employeeEmail)}</td>
       <td><span class="status-badge status-${escapeHtml(r.status)}"${r.verificationResult ? ` title="${escapeHtml(r.verificationResult)}"` : ""}>${escapeHtml(r.status)}</span></td>
-      <td>${progressLabel(r)}</td>
+      <td>
+        ${progressLabel(r)}
+        ${r.hasUploadedFile ? `<a class="file-link" href="/dashboard/records/${encodeURIComponent(r.id)}/file" target="_blank" rel="noopener">View file</a>` : ""}
+        ${r.hasSpouseFile ? `<a class="file-link" href="/dashboard/records/${encodeURIComponent(r.id)}/spouse-file" target="_blank" rel="noopener">View spouse file</a>` : ""}
+      </td>
       <td>${formatDate(r.sentAt)}</td>
       <td>${formatDate(r.receivedAt)}</td>
       <td>${formatDate(r.completedAt)}</td>
@@ -129,6 +138,10 @@ export function renderDashboardPage(props: DashboardPageProps): string {
     ? `<div class="notice-error">The link was regenerated, but the email failed to send — check the server logs for details, or use "Get Link" to grab it manually.</div>`
     : "";
 
+  const exportQuery = new URLSearchParams();
+  exportQuery.set("year", String(props.cycleYear));
+  if (props.statusFilter) exportQuery.set("status", props.statusFilter);
+
   const body = `
 <h1>HR Dashboard — ${props.cycleYear} Cycle</h1>
 <p class="session-line">Signed in as ${escapeHtml(props.hrUser.name)} (${escapeHtml(
@@ -139,6 +152,7 @@ ${resendFailedNotice}
 <div class="filters">
   ${filterLink("ALL")}
   ${STATUSES.map((s) => filterLink(filterLabel(s), s)).join("")}
+  <a class="export-link" href="/dashboard/export?${exportQuery.toString()}">Export CSV →</a>
 </div>
 <table>
   <thead>

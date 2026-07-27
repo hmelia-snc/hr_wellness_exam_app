@@ -1,0 +1,26 @@
+BEGIN TRY
+
+BEGIN TRAN;
+
+-- CreateTable
+CREATE TABLE [dbo].[file_access_logs] (
+    [id] NVARCHAR(1000) NOT NULL,
+    [physicalRecordId] NVARCHAR(1000) NOT NULL,
+    [fileType] NVARCHAR(1000) NOT NULL,
+    [viewedBy] NVARCHAR(1000) NOT NULL,
+    [viewedAt] DATETIME2 NOT NULL CONSTRAINT [file_access_logs_viewedAt_df] DEFAULT CURRENT_TIMESTAMP,
+    CONSTRAINT [file_access_logs_pkey] PRIMARY KEY CLUSTERED ([id])
+);
+
+COMMIT TRAN;
+
+END TRY
+BEGIN CATCH
+
+IF @@TRANCOUNT > 0
+BEGIN
+    ROLLBACK TRAN;
+END;
+THROW
+
+END CATCH

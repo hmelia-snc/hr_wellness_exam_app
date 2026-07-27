@@ -303,5 +303,11 @@ describe("GET /physical/:token/uploaded-file", () => {
     expect(res.status).toBe(200);
     expect(res.headers["content-type"]).toBe("application/pdf");
     expect(res.headers["content-disposition"]).toBe("inline");
+
+    expect(prisma._state.fileAccessLogs).toHaveLength(1);
+    expect(prisma._state.fileAccessLogs[0]).toMatchObject({
+      fileType: "employee",
+      viewedBy: "physical-test@example.com",
+    });
   });
 });

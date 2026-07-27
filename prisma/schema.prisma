@@ -61,3 +61,17 @@ model UploadBatch {
 
   @@map("upload_batches")
 }
+
+// Deliberately not FK-related to PhysicalRecord: an audit trail should
+// survive even if the underlying record is later purged (see
+// employeeActions.deleteEmployee), so a deleted employee's access history
+// isn't silently destroyed along with it.
+model FileAccessLog {
+  id               String   @id @default(uuid())
+  physicalRecordId String
+  fileType         String // "employee" | "spouse"
+  viewedBy         String // email of the HR user, or the employee's own email via their token
+  viewedAt         DateTime @default(now())
+
+  @@map("file_access_logs")
+}
