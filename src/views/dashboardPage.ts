@@ -77,13 +77,12 @@ const EXTRA_STYLES = `
   .file-link { display: block; font-size: 0.75rem; color: ${BRAND.red}; text-decoration: none; margin-top: 0.15rem; }
   .file-link:hover { text-decoration: underline; }
   .export-link { color: ${BRAND.red}; font-weight: 500; text-decoration: none; font-size: 0.9rem; }
-  .notice-error { background: ${BRAND.redTint10}; color: ${BRAND.darkRed}; border: 1px solid ${BRAND.redTintBorder}; border-radius: 6px; padding: 0.6rem 1rem; margin-bottom: 1rem; }
+  .notice-error { margin-bottom: 1rem; }
   @media (prefers-color-scheme: dark) {
     th, td { border-bottom-color: #3a3836; }
     .status-sent { background: #333230; color: #ccc; }
     .session-line { color: #aaa; }
     .inactive-note { color: #999; }
-    .notice-error { background: ${BRAND.redTint10Dark}; color: #f5b9b4; border-color: ${BRAND.redTintBorderDark}; }
     .year-select-form select { background: #232120; color: #ededed; border-color: #45423f; }
   }
 `;

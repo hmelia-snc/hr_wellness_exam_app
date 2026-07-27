@@ -57,6 +57,8 @@ const BASE_STYLES = `
     border-radius: 6px;
     padding: 0.75rem 1rem;
   }
+  .notice-success { background: #d9f2d9; color: #1e6b1e; border: 1px solid #a9d9a9; border-radius: 6px; padding: 0.6rem 1rem; }
+  .notice-error { background: ${BRAND.redTint10}; color: ${BRAND.darkRed}; border: 1px solid ${BRAND.redTintBorder}; border-radius: 6px; padding: 0.6rem 1rem; }
   .downloads { display: flex; gap: 0.75rem; flex-wrap: wrap; }
   .button {
     display: inline-block;
@@ -103,6 +105,8 @@ const BASE_STYLES = `
     body { color: #ededed; background: #171514; }
     input[type="text"], input[type="email"] { background: #232120; color: #ededed; border-color: #45423f; }
     .notice { background: ${BRAND.redTint10Dark}; color: #f5b9b4; border-color: ${BRAND.redTintBorderDark}; }
+    .notice-success { background: #1c3a1c; color: #b3e6b3; border-color: #2e5c2e; }
+    .notice-error { background: ${BRAND.redTint10Dark}; color: #f5b9b4; border-color: ${BRAND.redTintBorderDark}; }
     h1 { color: #f5f5f5; }
     h2 { color: #e08b85; }
     .brand-footer { border-top-color: #3a3836; color: #9a9896; }

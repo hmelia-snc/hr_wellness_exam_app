@@ -85,8 +85,6 @@ const EXTRA_STYLES = `
   .checkbox-field label { white-space: nowrap; }
   .actions-cell { display: flex; flex-wrap: nowrap; gap: 0.4rem; white-space: nowrap; }
   .actions-cell form { display: inline; }
-  .notice-success { background: #d9f2d9; color: #1e6b1e; border: 1px solid #a9d9a9; border-radius: 6px; padding: 0.6rem 1rem; }
-  .notice-error { background: ${BRAND.redTint10}; color: ${BRAND.darkRed}; border: 1px solid ${BRAND.redTintBorder}; border-radius: 6px; padding: 0.6rem 1rem; }
   .row-errors { color: ${BRAND.darkRed}; }
   @media (prefers-color-scheme: dark) {
     th, td { border-bottom-color: #3a3836; }
@@ -94,7 +92,6 @@ const EXTRA_STYLES = `
     .session-line { color: #aaa; }
     .card { border-color: #3a3836; }
     .inline-fields input { background: #232120; color: #ededed; border-color: #45423f; }
-    .notice-error { background: ${BRAND.redTint10Dark}; color: #f5b9b4; border-color: ${BRAND.redTintBorderDark}; }
   }
 `;
 

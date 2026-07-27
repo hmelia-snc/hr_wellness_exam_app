@@ -25,9 +25,9 @@ function statusNotice(status: PhysicalPageStatus): string {
     case "sent":
       return "";
     case "received":
-      return `<p class="notice">We've received your uploaded form — thank you! If you need to replace it, upload a new one below.<br>Hemos recibido su formulario — ¡gracias! Si necesita reemplazarlo, suba uno nuevo a continuación.</p>`;
+      return `<p class="notice-success">We've received your uploaded form — thank you! If you need to replace it, upload a new one below.<br>Hemos recibido su formulario — ¡gracias! Si necesita reemplazarlo, suba uno nuevo a continuación.</p>`;
     case "needs_review":
-      return `<p class="notice">Your form is being reviewed by HR. If you need to replace it, upload a new one below.<br>Su formulario está siendo revisado por Recursos Humanos. Si necesita reemplazarlo, suba uno nuevo a continuación.</p>`;
+      return `<p class="notice-success">Your form is being reviewed by HR. If you need to replace it, upload a new one below.<br>Su formulario está siendo revisado por Recursos Humanos. Si necesita reemplazarlo, suba uno nuevo a continuación.</p>`;
   }
 }
 
@@ -50,7 +50,7 @@ export interface SpouseFormInfo {
 
 function spouseStatusLine(spouseReceived: boolean): string {
   return spouseReceived
-    ? `<p class="notice">Spouse form: received — thank you!<br>Formulario del cónyuge: recibido — ¡gracias!</p>`
+    ? `<p class="notice-success">Spouse form: received — thank you!<br>Formulario del cónyuge: recibido — ¡gracias!</p>`
     : `<p class="notice">Spouse form: not yet received.<br>Formulario del cónyuge: aún no recibido.</p>`;
 }
 
