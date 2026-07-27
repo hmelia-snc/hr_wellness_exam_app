@@ -5,9 +5,9 @@ This has been run end-to-end against a real Azure subscription
 live. (Originally provisioned as `hr-physical-tracker.azurewebsites.net`;
 migrated to a new App Service on the same plan/database/storage so no
 employee-facing wording says "physical tracker" — see "URL/hostname
-migration" below. The old hostname is being kept running, frozen at its
-last deployed build, purely so any already-issued-but-unused links from
-before the migration keep working until they expire.) A few
+migration" below. The old App Service has since been decommissioned —
+deleted outright, not just stopped — since this was still pre-launch with
+no real employee links outstanding.) A few
 real issues turned up along the way that aren't obvious from the docs —
 see "Known limitations" at the bottom, and the provisioning script/workflow
 already reflect the fixes (Node runtime version, Basic Auth publishing
@@ -227,8 +227,7 @@ page, and the home page. Since that text also showed up in the App
 Service's own hostname, the app was migrated to a new App Service:
 
 - **New**: `snc-wellness-exam-verification.azurewebsites.net`
-- **Old**: `hr-physical-tracker.azurewebsites.net` (kept running, frozen at
-  its last deployed build — not decommissioned)
+- **Old**: `hr-physical-tracker.azurewebsites.net` (deleted — see below)
 
 Azure App Service names are permanent once created and globally unique
 across all of Azure, so this wasn't an in-place rename — it was: provision
@@ -246,17 +245,22 @@ The employee-facing route path also changed, from `/physical/:token` to
 `/wellness-exam/:token`, so no part of an emailed link says "physical"
 either.
 
-**The old App Service was deliberately left running, not stopped or
-deleted.** Any physical-form link already emailed before this migration
-still points at the old hostname and the old `/physical/:token` path —
-since both apps share the same database, those old links keep working
-against the old app's still-deployed (pre-rename) build until they
-naturally expire (`TOKEN_EXPIRY_DAYS`, 30 days by default). Once you're
-confident no old links are still outstanding, the old App Service
-(`hr-physical-tracker`) can be stopped or deleted — that's a deliberate
-manual step, not automated here, since deleting a resource other software
-depends on is exactly the kind of action that shouldn't happen without an
-explicit go-ahead.
+The old App Service was initially left running deliberately (any
+physical-form link already emailed before the migration would have pointed
+at the old hostname and the old `/physical/:token` path, and since both
+apps shared the same database, those links would have kept working against
+the old app's still-deployed pre-rename build until they naturally
+expired). It's since been deleted outright — confirmed pre-launch with no
+real employee links outstanding — along with the now-unused
+`hr-physical-tracker` redirect URIs on the Entra dashboard SSO app
+registration. The `hrapp-plan` App Service Plan and the shared
+database/storage were untouched by this; only the old App Service resource
+itself was removed.
+
+If you ever repeat a hostname migration like this **after real employee
+links are in circulation**, keep the old App Service running (as described
+above) until `TOKEN_EXPIRY_DAYS` (30 days by default) has fully elapsed for
+every record sent under the old link, rather than deleting it right away.
 
 ## Known limitations to revisit before real production traffic
 
