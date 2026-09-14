@@ -68,6 +68,10 @@ const EXTRA_STYLES = `
   .card h2 { margin-top: 0; }
   .inline-fields { display: flex; gap: 0.75rem; flex-wrap: wrap; align-items: flex-end; }
   .inline-fields > div { display: flex; flex-direction: column; }
+  /* The plain rule above beats the UA stylesheet's [hidden] { display: none }
+     on specificity, so a hidden field (like #linked-employee-field) would
+     otherwise stay visible — this restores it. */
+  .inline-fields > div[hidden] { display: none; }
   .inline-fields input[type="text"],
   .inline-fields input[type="email"],
   .inline-fields input[type="number"] {
@@ -76,6 +80,29 @@ const EXTRA_STYLES = `
     border-radius: 6px;
     border: 1px solid #ccc;
   }
+  .combobox { position: relative; }
+  .combobox input[type="text"] { width: 220px; box-sizing: border-box; }
+  .combobox-list {
+    position: absolute;
+    top: 100%;
+    left: 0;
+    right: 0;
+    z-index: 20;
+    margin: 2px 0 0;
+    padding: 0.25rem 0;
+    list-style: none;
+    max-height: 220px;
+    overflow-y: auto;
+    background: #fff;
+    border: 1px solid #ccc;
+    border-radius: 6px;
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.12);
+  }
+  .combobox-list li { padding: 0.4rem 0.6rem; cursor: pointer; font-size: 0.95rem; }
+  .combobox-list li.active,
+  .combobox-list li:hover { background: ${BRAND.redTint10}; }
+  .combobox-list li.combobox-empty { color: #888; cursor: default; }
+  .combobox-list li.combobox-empty:hover { background: none; }
   .small-button {
     font-family: 'Ubuntu', Arial, sans-serif;
     font-size: 0.8rem;
@@ -114,6 +141,10 @@ const EXTRA_STYLES = `
     .session-line { color: #aaa; }
     .card { border-color: #3a3836; }
     .inline-fields input { background: #232120; color: #ededed; border-color: #45423f; }
+    .combobox-list { background: #232120; border-color: #45423f; }
+    .combobox-list li.active,
+    .combobox-list li:hover { background: #3a3836; }
+    .combobox-list li.combobox-empty { color: #999; }
   }
 `;
 
@@ -211,23 +242,25 @@ ${bulkDeletedNotice}
 
 <div class="card">
   <h2>Add a record</h2>
-  <form method="post" action="/dashboard/employees">
+  <form method="post" action="/dashboard/employees" id="add-record-form">
     <div class="inline-fields">
       <div>
-        <label for="recordType">Record type</label>
-        <select id="recordType" name="recordType" onchange="toggleRecordTypeFields()">
-          <option value="employee">Employee</option>
-          <option value="spouse">Spouse</option>
-        </select>
+        <label for="recordTypeSearch">Record type</label>
+        <div class="combobox">
+          <input type="text" id="recordTypeSearch" autocomplete="off" role="combobox" aria-expanded="false" aria-controls="recordTypeList" />
+          <input type="hidden" id="recordType" name="recordType" value="employee" />
+          <ul class="combobox-list" id="recordTypeList" role="listbox" hidden></ul>
+        </div>
       </div>
       <div><label for="fullName">Full name</label><input type="text" id="fullName" name="fullName" required /></div>
       <div id="email-field"><label for="email">Email</label><input type="email" id="email" name="email" required /></div>
       <div id="linked-employee-field" hidden>
-        <label for="linkedEmployeeId">Associate with employee</label>
-        <select id="linkedEmployeeId" name="linkedEmployeeId">
-          <option value="">Select an employee…</option>
-          ${props.employeeOptions.map((o) => `<option value="${escapeHtml(o.id)}">${escapeHtml(o.fullName)}</option>`).join("")}
-        </select>
+        <label for="linkedEmployeeSearch">Associate with employee</label>
+        <div class="combobox">
+          <input type="text" id="linkedEmployeeSearch" autocomplete="off" placeholder="Search employees…" role="combobox" aria-expanded="false" aria-controls="linkedEmployeeList" />
+          <input type="hidden" id="linkedEmployeeId" name="linkedEmployeeId" />
+          <ul class="combobox-list" id="linkedEmployeeList" role="listbox" hidden></ul>
+        </div>
       </div>
       <div><label for="employeeIdExternal">Employee ID (optional)</label><input type="text" id="employeeIdExternal" name="employeeIdExternal" /></div>
       <div><label for="cycleYear">Cycle year</label><input type="number" id="cycleYear" name="cycleYear" value="${props.defaultCycleYear}" required /></div>
@@ -267,13 +300,165 @@ ${bulkDeletedNotice}
 </form>
 
 <script>
+  // Minimal type-ahead combobox: a visible text input filters a dropdown of
+  // {value,label} options; the actual form value lives in a paired hidden
+  // input so the field still submits a plain id/enum value, not the
+  // display label. No native <select> here since neither field needs one —
+  // this is deliberately dependency-free (no CDN combobox library) to match
+  // the rest of this app's plain-JS approach.
+  function initCombobox(config) {
+    var input = document.getElementById(config.inputId);
+    var hidden = document.getElementById(config.hiddenId);
+    var list = document.getElementById(config.listId);
+    var options = config.options;
+    var filtered = options.slice();
+    var highlighted = -1;
+
+    function labelFor(value) {
+      for (var i = 0; i < options.length; i++) {
+        if (options[i].value === value) return options[i].label;
+      }
+      return '';
+    }
+
+    function render() {
+      list.innerHTML = '';
+      if (filtered.length === 0) {
+        var empty = document.createElement('li');
+        empty.className = 'combobox-empty';
+        empty.textContent = 'No matches';
+        list.appendChild(empty);
+        return;
+      }
+      filtered.forEach(function (opt, i) {
+        var li = document.createElement('li');
+        li.textContent = opt.label;
+        li.setAttribute('role', 'option');
+        if (i === highlighted) li.className = 'active';
+        li.addEventListener('mousedown', function (e) {
+          // mousedown (not click) fires before the input's blur handler,
+          // so the selection wins instead of blur snapping the text back.
+          e.preventDefault();
+          select(opt);
+        });
+        list.appendChild(li);
+      });
+    }
+
+    function open() {
+      input.setAttribute('aria-expanded', 'true');
+      list.hidden = false;
+      render();
+    }
+
+    function close() {
+      input.setAttribute('aria-expanded', 'false');
+      list.hidden = true;
+      highlighted = -1;
+    }
+
+    function select(opt) {
+      input.value = opt.label;
+      hidden.value = opt.value;
+      close();
+      if (config.onChange) config.onChange(opt.value);
+    }
+
+    function filterOptions() {
+      var q = input.value.trim().toLowerCase();
+      filtered = q ? options.filter(function (o) { return o.label.toLowerCase().indexOf(q) !== -1; }) : options.slice();
+      highlighted = -1;
+    }
+
+    input.addEventListener('input', function () {
+      filterOptions();
+      open();
+      // Typing invalidates whatever was previously selected until they pick
+      // a match again — prevents submitting a stale hidden value that no
+      // longer matches the visible text.
+      hidden.value = '';
+    });
+    input.addEventListener('focus', function () {
+      filterOptions();
+      open();
+    });
+    input.addEventListener('keydown', function (e) {
+      if (e.key === 'ArrowDown') {
+        e.preventDefault();
+        if (list.hidden) { filterOptions(); open(); }
+        highlighted = Math.min(highlighted + 1, filtered.length - 1);
+        render();
+      } else if (e.key === 'ArrowUp') {
+        e.preventDefault();
+        highlighted = Math.max(highlighted - 1, 0);
+        render();
+      } else if (e.key === 'Enter') {
+        if (!list.hidden && highlighted >= 0 && filtered[highlighted]) {
+          e.preventDefault();
+          select(filtered[highlighted]);
+        }
+      } else if (e.key === 'Escape') {
+        close();
+      }
+    });
+    input.addEventListener('blur', function () {
+      // Delay so a mousedown-driven select() above (or an outside click)
+      // resolves first.
+      setTimeout(function () {
+        input.value = hidden.value ? labelFor(hidden.value) : '';
+        close();
+      }, 150);
+    });
+    document.addEventListener('click', function (e) {
+      if (e.target !== input && !list.contains(e.target)) close();
+    });
+
+    return {
+      setValue: function (value) {
+        hidden.value = value;
+        input.value = labelFor(value);
+      },
+    };
+  }
+
+  var linkedEmployeeCombo = initCombobox({
+    inputId: 'linkedEmployeeSearch',
+    hiddenId: 'linkedEmployeeId',
+    listId: 'linkedEmployeeList',
+    options: ${JSON.stringify(props.employeeOptions.map((o) => ({ value: o.id, label: o.fullName }))).replace(/</g, "\\u003c")},
+  });
+
+  var recordTypeCombo = initCombobox({
+    inputId: 'recordTypeSearch',
+    hiddenId: 'recordType',
+    listId: 'recordTypeList',
+    options: [
+      { value: 'employee', label: 'Employee' },
+      { value: 'spouse', label: 'Spouse' },
+    ],
+    onChange: toggleRecordTypeFields,
+  });
+  recordTypeCombo.setValue('employee');
+  toggleRecordTypeFields();
+
   function toggleRecordTypeFields() {
     var isSpouse = document.getElementById('recordType').value === 'spouse';
-    document.getElementById('email-field').hidden = false;
     document.getElementById('email').required = !isSpouse;
     document.getElementById('linked-employee-field').hidden = !isSpouse;
-    document.getElementById('linkedEmployeeId').required = isSpouse;
+    if (!isSpouse) {
+      linkedEmployeeCombo.setValue('');
+    }
   }
+
+  document.getElementById('add-record-form').addEventListener('submit', function (e) {
+    var isSpouse = document.getElementById('recordType').value === 'spouse';
+    if (isSpouse && !document.getElementById('linkedEmployeeId').value) {
+      e.preventDefault();
+      alert('Select which employee this spouse belongs to.');
+      document.getElementById('linkedEmployeeSearch').focus();
+    }
+  });
+
   function toggleAllRows(source) {
     var boxes = document.querySelectorAll('#bulk-form input[name="ids"]');
     for (var i = 0; i < boxes.length; i++) boxes[i].checked = source.checked;
