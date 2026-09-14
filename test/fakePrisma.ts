@@ -162,9 +162,15 @@ export function createFakePrisma() {
           results = results.map((r) => {
             const emp = employees.find((e) => e.id === r.employeeId) ?? null;
             let employee = emp;
-            if (emp && include.employee?.include?.linkedEmployee) {
-              const linked = emp.linkedEmployeeId ? (employees.find((x) => x.id === emp.linkedEmployeeId) ?? null) : null;
-              employee = { ...emp, linkedEmployee: linked };
+            if (emp) {
+              const extra: Record<string, unknown> = {};
+              if (include.employee?.include?.linkedEmployee) {
+                extra.linkedEmployee = emp.linkedEmployeeId ? (employees.find((x) => x.id === emp.linkedEmployeeId) ?? null) : null;
+              }
+              if (include.employee?.include?.spouseRecords) {
+                extra.spouseRecords = employees.filter((x) => x.linkedEmployeeId === emp.id);
+              }
+              if (Object.keys(extra).length > 0) employee = { ...emp, ...extra };
             }
             return { ...r, employee };
           });

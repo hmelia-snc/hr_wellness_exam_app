@@ -43,6 +43,53 @@ function queryNumber(value: unknown): number | undefined {
   return Number.isFinite(n) ? n : undefined;
 }
 
+// Shape common to both the dashboard list and CSV export queries — just
+// enough for computeDisplayStatuses below, regardless of what else each
+// caller's `include`/`select` pulls in.
+interface RecordForStatus {
+  employeeId: string;
+  status: string;
+  spouseStatus: string | null;
+  employee: {
+    recordType: string;
+    needsSpouseForm: boolean;
+    spouseRecords: { id: string }[];
+  };
+}
+
+/**
+ * Derives a display status that overrides a literally-"completed" record to
+ * "waiting_on_spouse" when the employee's own form is done but the linked
+ * spouse's side isn't yet — under either model:
+ *   - New: a linked spouse roster row (recordType "spouse") tracks its own
+ *     PhysicalRecord for the same cycle; look up its status by employeeId.
+ *   - Old: no linked spouse row, just the needsSpouseForm flag with the
+ *     spouse's status embedded on this same record (spouseStatus).
+ * Every other status passes through unchanged, and a spouse's own row is
+ * never overridden (no "waiting on employee" case is needed by symmetry —
+ * only asked for this direction). This is purely a display-layer label:
+ * the underlying `status` column, which button eligibility and other logic
+ * still key off, is untouched.
+ */
+function withDisplayStatuses<T extends RecordForStatus>(records: T[]): (T & { displayStatus: string })[] {
+  const statusByEmployeeId = new Map(records.map((r) => [r.employeeId, r.status]));
+  return records.map((record) => {
+    const { employee } = record;
+    let displayStatus = record.status;
+    if (record.status === "completed" && employee.recordType !== "spouse") {
+      const linkedSpouseEmployeeId = employee.spouseRecords[0]?.id;
+      if (linkedSpouseEmployeeId) {
+        if (statusByEmployeeId.get(linkedSpouseEmployeeId) !== "completed") {
+          displayStatus = "waiting_on_spouse";
+        }
+      } else if (employee.needsSpouseForm && record.spouseStatus !== "completed") {
+        displayStatus = "waiting_on_spouse";
+      }
+    }
+    return { ...record, displayStatus };
+  });
+}
+
 // The dashboard already hides the Resend/Get Link/Reject buttons (and
 // disables the bulk-select checkbox) for inactive employees, but that's
 // client-side only — a crafted direct POST, or a bulk request, could still
@@ -64,10 +111,19 @@ export function createDashboardRouter(prisma: PrismaClient, emailSender: EmailSe
     try {
       const { cycleYear, statusFilter } = cycleYearAndStatusFilter(req);
 
-      const [records, distinctYears] = await Promise.all([
+      // Fetched unfiltered by status (filtering happens below, against the
+      // derived displayStatus) — a "completed" filter needs to tell a truly
+      // finished record apart from one waiting on its spouse, and computing
+      // that for an employee's row requires the linked spouse's own record
+      // (also cycle-scoped) to already be in hand.
+      const [allRecords, distinctYears] = await Promise.all([
         prisma.physicalRecord.findMany({
-          where: { cycleYear, ...(statusFilter ? { status: statusFilter } : {}) },
-          include: { employee: { include: { linkedEmployee: { select: { fullName: true } } } } },
+          where: { cycleYear },
+          include: {
+            employee: {
+              include: { linkedEmployee: { select: { fullName: true } }, spouseRecords: { select: { id: true } } },
+            },
+          },
           orderBy: { createdAt: "asc" },
         }),
         prisma.physicalRecord.findMany({ select: { cycleYear: true }, distinct: ["cycleYear"] }),
@@ -77,6 +133,8 @@ export function createDashboardRouter(prisma: PrismaClient, emailSender: EmailSe
       const availableYears = [...new Set([...distinctYears.map((r) => r.cycleYear), new Date().getFullYear(), cycleYear])].sort(
         (a, b) => b - a
       );
+
+      const records = withDisplayStatuses(allRecords).filter((r) => !statusFilter || r.displayStatus === statusFilter);
 
       res.send(
         renderDashboardPage({
@@ -101,6 +159,7 @@ export function createDashboardRouter(prisma: PrismaClient, emailSender: EmailSe
             recordType: record.employee.recordType === "spouse" ? ("spouse" as const) : ("employee" as const),
             linkedEmployeeName: record.employee.linkedEmployee?.fullName ?? null,
             status: record.status,
+            displayStatus: record.displayStatus,
             sentAt: record.sentAt,
             receivedAt: record.receivedAt,
             completedAt: record.completedAt,
@@ -125,11 +184,12 @@ export function createDashboardRouter(prisma: PrismaClient, emailSender: EmailSe
     try {
       const { cycleYear, statusFilter } = cycleYearAndStatusFilter(req);
 
-      const records = await prisma.physicalRecord.findMany({
-        where: { cycleYear, ...(statusFilter ? { status: statusFilter } : {}) },
-        include: { employee: true },
+      const allRecords = await prisma.physicalRecord.findMany({
+        where: { cycleYear },
+        include: { employee: { include: { spouseRecords: { select: { id: true } } } } },
         orderBy: { createdAt: "asc" },
       });
+      const records = withDisplayStatuses(allRecords).filter((r) => !statusFilter || r.displayStatus === statusFilter);
 
       const formatDate = (date: Date | null) => (date ? date.toISOString().slice(0, 10) : "");
       const csv = buildCsv(
@@ -152,7 +212,7 @@ export function createDashboardRouter(prisma: PrismaClient, emailSender: EmailSe
           r.employee.fullName,
           r.employee.email ?? "",
           r.employee.recordType === "spouse" ? "spouse" : "employee",
-          r.status,
+          r.displayStatus,
           formatDate(r.sentAt),
           formatDate(r.receivedAt),
           formatDate(r.completedAt),

@@ -893,6 +893,139 @@ describe("Dashboard: linked spouse roster records show as their own row", () => 
   });
 });
 
+describe("Dashboard: Waiting on Spouse status", () => {
+  it("shows Waiting on Spouse (new model) when the employee is completed but the linked spouse isn't", async () => {
+    const prisma = createFakePrisma();
+    const { employee } = await seedEmployeeAndRecord(prisma, { status: "completed", receivedAt: new Date(), completedAt: new Date() });
+    const spouse = await prisma.employee.create({
+      data: { fullName: "John Doe", recordType: "spouse", linkedEmployeeId: employee.id, active: true },
+    });
+    prisma._state.physicalRecords.push({
+      id: "spouse-rec-waiting",
+      employeeId: spouse.id,
+      cycleYear: 2026,
+      tokenHash: "spouse-hash-waiting",
+      tokenExpiresAt: new Date(Date.now() + 1000 * 60 * 60 * 24 * 30),
+      status: "sent",
+      createdAt: new Date(),
+    });
+    const app = createApp(prisma as any, createFakeBlobStorage(), createFakeEmailSender());
+    const agent = request.agent(app);
+    await agent.post("/auth/login").type("form").send({ returnTo: "/dashboard" });
+
+    const res = await agent.get("/dashboard?year=2026");
+    // The employee's own row is overridden to "Waiting on Spouse" instead of
+    // "Completed" — the underlying record.status is still literally
+    // "completed" (button eligibility etc. are unaffected), but the display
+    // reflects the spouse side isn't done yet.
+    expect(res.text).toContain('<span class="status-badge status-waiting_on_spouse"');
+    expect(res.text).toContain("Waiting on Spouse");
+    // Not just absent from view — the EXTRA_STYLES <style> block always
+    // defines .status-completed, so check the actual badge markup rather
+    // than a bare substring.
+    expect(res.text).not.toContain('class="status-badge status-completed"');
+  });
+
+  it("shows Completed (new model) once both the employee's and the linked spouse's records are completed", async () => {
+    const prisma = createFakePrisma();
+    const { employee } = await seedEmployeeAndRecord(prisma, { status: "completed", receivedAt: new Date(), completedAt: new Date() });
+    const spouse = await prisma.employee.create({
+      data: { fullName: "John Doe", recordType: "spouse", linkedEmployeeId: employee.id, active: true },
+    });
+    prisma._state.physicalRecords.push({
+      id: "spouse-rec-done",
+      employeeId: spouse.id,
+      cycleYear: 2026,
+      tokenHash: "spouse-hash-done",
+      tokenExpiresAt: new Date(Date.now() + 1000 * 60 * 60 * 24 * 30),
+      status: "completed",
+      completedAt: new Date(),
+      createdAt: new Date(),
+    });
+    const app = createApp(prisma as any, createFakeBlobStorage(), createFakeEmailSender());
+    const agent = request.agent(app);
+    await agent.post("/auth/login").type("form").send({ returnTo: "/dashboard" });
+
+    const res = await agent.get("/dashboard?year=2026");
+    // Bare "status-waiting_on_spouse" also matches the always-present CSS
+    // rule in EXTRA_STYLES, so check the actual badge markup instead.
+    expect(res.text).not.toContain('class="status-badge status-waiting_on_spouse"');
+    expect(res.text).not.toContain("Waiting on Spouse");
+  });
+
+  it("shows Waiting on Spouse (legacy embedded model) when the employee is completed but spouseStatus isn't", async () => {
+    const prisma = createFakePrisma();
+    await seedEmployeeAndRecord(
+      prisma,
+      { status: "completed", receivedAt: new Date(), completedAt: new Date(), spouseStatus: "received" },
+      { needsSpouseForm: true }
+    );
+    const app = createApp(prisma as any, createFakeBlobStorage(), createFakeEmailSender());
+    const agent = request.agent(app);
+    await agent.post("/auth/login").type("form").send({ returnTo: "/dashboard" });
+
+    const res = await agent.get("/dashboard?year=2026");
+    expect(res.text).toContain('<span class="status-badge status-waiting_on_spouse"');
+    expect(res.text).toContain("Waiting on Spouse");
+  });
+
+  it("shows Completed (legacy embedded model) once spouseStatus is also completed", async () => {
+    const prisma = createFakePrisma();
+    await seedEmployeeAndRecord(
+      prisma,
+      { status: "completed", receivedAt: new Date(), completedAt: new Date(), spouseStatus: "completed" },
+      { needsSpouseForm: true }
+    );
+    const app = createApp(prisma as any, createFakeBlobStorage(), createFakeEmailSender());
+    const agent = request.agent(app);
+    await agent.post("/auth/login").type("form").send({ returnTo: "/dashboard" });
+
+    const res = await agent.get("/dashboard?year=2026");
+    expect(res.text).not.toContain('class="status-badge status-waiting_on_spouse"');
+  });
+
+  it("filters by ?status=waiting_on_spouse and excludes those rows from ?status=completed", async () => {
+    const prisma = createFakePrisma();
+    await seedEmployeeAndRecord(
+      prisma,
+      { status: "completed", receivedAt: new Date(), completedAt: new Date(), spouseStatus: "received" },
+      { needsSpouseForm: true, email: "waiting@example.com", fullName: "Waiting Person" }
+    );
+    await seedEmployeeAndRecord(
+      prisma,
+      { id: "rec-2", status: "completed", receivedAt: new Date(), completedAt: new Date() },
+      { email: "done@example.com", fullName: "Done Person" }
+    );
+    const app = createApp(prisma as any, createFakeBlobStorage(), createFakeEmailSender());
+    const agent = request.agent(app);
+    await agent.post("/auth/login").type("form").send({ returnTo: "/dashboard" });
+
+    const waitingFiltered = await agent.get("/dashboard?year=2026&status=waiting_on_spouse");
+    expect(waitingFiltered.text).toContain("Waiting Person");
+    expect(waitingFiltered.text).not.toContain("Done Person");
+
+    const completedFiltered = await agent.get("/dashboard?year=2026&status=completed");
+    expect(completedFiltered.text).toContain("Done Person");
+    expect(completedFiltered.text).not.toContain("Waiting Person");
+  });
+
+  it("reflects waiting_on_spouse in the CSV export's Status column", async () => {
+    const prisma = createFakePrisma();
+    await seedEmployeeAndRecord(
+      prisma,
+      { status: "completed", receivedAt: new Date(), completedAt: new Date(), spouseStatus: "received" },
+      { needsSpouseForm: true }
+    );
+    const app = createApp(prisma as any, createFakeBlobStorage(), createFakeEmailSender());
+    const agent = request.agent(app);
+    await agent.post("/auth/login").type("form").send({ returnTo: "/dashboard" });
+
+    const res = await agent.get("/dashboard/export?year=2026");
+    const lines = res.text.trim().split("\n");
+    expect(lines[1]).toContain("waiting_on_spouse");
+  });
+});
+
 describe("GET /dashboard/records/:id/file", () => {
   it("streams the employee's uploaded file and logs who viewed it", async () => {
     const prisma = createFakePrisma();

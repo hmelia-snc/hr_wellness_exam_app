@@ -16,6 +16,12 @@ export interface DashboardRecordRow {
   // the "Spouse of X" annotation under the row's name.
   linkedEmployeeName: string | null;
   status: string;
+  // Usually the same as `status`, except overridden to "waiting_on_spouse"
+  // when this is an employee's own record, it's literally "completed", but
+  // the linked spouse's side (new model's own record, or the old model's
+  // embedded spouseStatus) isn't done yet. Button eligibility below still
+  // keys off the real `status`, not this — this only changes what's shown.
+  displayStatus: string;
   sentAt: Date | null;
   receivedAt: Date | null;
   completedAt: Date | null;
@@ -53,7 +59,24 @@ export interface DashboardPageProps {
   records: DashboardRecordRow[];
 }
 
-const STATUSES = ["sent", "received", "needs_review", "rejected", "completed"];
+const STATUSES = ["sent", "received", "needs_review", "rejected", "completed", "waiting_on_spouse"];
+
+// Exact wording for each status badge — a plain word-capitalize of the raw
+// value would read fine for most ("needs_review" -> "Needs Review") but
+// "waiting_on_spouse" needs a specific lowercase "on", so every status gets
+// an explicit label instead of a generic transform.
+const STATUS_LABELS: Record<string, string> = {
+  sent: "Sent",
+  received: "Received",
+  needs_review: "Needs Review",
+  rejected: "Rejected",
+  completed: "Completed",
+  waiting_on_spouse: "Waiting on Spouse",
+};
+
+function statusLabel(status: string): string {
+  return STATUS_LABELS[status] ?? status;
+}
 
 const EXTRA_STYLES = `
   table { width: 100%; border-collapse: collapse; margin-top: 1rem; }
@@ -68,6 +91,7 @@ const EXTRA_STYLES = `
   .status-not_received { background: #eaeaea; color: #888; }
   .status-employee { background: #eaeaea; color: #444; }
   .status-spouse { background: ${BRAND.redTint10}; color: ${BRAND.darkRed}; }
+  .status-waiting_on_spouse { background: #e0d6f5; color: #4b2e83; }
   .spouse-status-row { margin-top: 0.3rem; font-size: 0.75rem; color: #666; }
   .spouse-status-row .status-badge { font-size: 0.72rem; padding: 0.1rem 0.5rem; }
   .linked-note { font-size: 0.75rem; color: #666; margin-top: 0.15rem; }
@@ -137,6 +161,7 @@ const EXTRA_STYLES = `
     .status-sent { background: #333230; color: #ccc; }
     .status-not_received { background: #333230; color: #999; }
     .status-employee { background: #333230; color: #ccc; }
+    .status-waiting_on_spouse { background: #3a2d57; color: #d7c6f7; }
     .spouse-status-row { color: #999; }
     .linked-note { color: #999; }
     .session-line { color: #aaa; }
@@ -176,7 +201,7 @@ export function renderDashboardPage(props: DashboardPageProps): string {
       <td>${r.employeeEmail ? escapeHtml(r.employeeEmail) : "—"}</td>
       <td><span class="status-badge status-${r.recordType}">${r.recordType === "spouse" ? "Spouse" : "Employee"}</span></td>
       <td>
-        <span class="status-badge status-${escapeHtml(r.status)}"${r.verificationResult ? ` title="${escapeHtml(r.verificationResult)}"` : ""}>${escapeHtml(r.status)}</span>
+        <span class="status-badge status-${escapeHtml(r.displayStatus)}"${r.verificationResult ? ` title="${escapeHtml(r.verificationResult)}"` : ""}>${escapeHtml(statusLabel(r.displayStatus))}</span>
         ${r.rejectionReason ? `<span class="rejection-reason" title="${escapeHtml(r.rejectionReason)}">${escapeHtml(r.rejectionReason)}</span>` : ""}
         ${
           r.needsSpouseForm
