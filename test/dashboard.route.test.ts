@@ -856,6 +856,11 @@ describe("Dashboard: linked spouse roster records show as their own row", () => 
     // The spouse row's own actions use the regular /approve /reject routes,
     // just labeled for the spouse rather than "via" the old spouse* fields.
     expect(res.text).toContain("Submitted via Jane Doe's link");
+    // A dedicated Type column/badge, not just the "Spouse of X" annotation
+    // under the name — distinguishes a spouse's own row from an employee's
+    // at a glance.
+    expect(res.text).toContain('<span class="status-badge status-spouse">Spouse</span>');
+    expect(res.text).toContain('<span class="status-badge status-employee">Employee</span>');
   });
 
   it("labels a linked spouse row's approve/reject actions 'Approve Spouse'/'Reject Spouse'", async () => {

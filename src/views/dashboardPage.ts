@@ -66,6 +66,8 @@ const EXTRA_STYLES = `
   .status-rejected { background: ${BRAND.red}; color: #fff; }
   .status-completed { background: #d9f2d9; color: #1e6b1e; }
   .status-not_received { background: #eaeaea; color: #888; }
+  .status-employee { background: #eaeaea; color: #444; }
+  .status-spouse { background: ${BRAND.redTint10}; color: ${BRAND.darkRed}; }
   .spouse-status-row { margin-top: 0.3rem; font-size: 0.75rem; color: #666; }
   .spouse-status-row .status-badge { font-size: 0.72rem; padding: 0.1rem 0.5rem; }
   .linked-note { font-size: 0.75rem; color: #666; margin-top: 0.15rem; }
@@ -134,6 +136,7 @@ const EXTRA_STYLES = `
     th, td { border-bottom-color: #3a3836; }
     .status-sent { background: #333230; color: #ccc; }
     .status-not_received { background: #333230; color: #999; }
+    .status-employee { background: #333230; color: #ccc; }
     .spouse-status-row { color: #999; }
     .linked-note { color: #999; }
     .session-line { color: #aaa; }
@@ -171,6 +174,7 @@ export function renderDashboardPage(props: DashboardPageProps): string {
         ${r.recordType === "spouse" && r.linkedEmployeeName ? `<div class="linked-note">↳ Spouse of ${escapeHtml(r.linkedEmployeeName)}</div>` : ""}
       </td>
       <td>${r.employeeEmail ? escapeHtml(r.employeeEmail) : "—"}</td>
+      <td><span class="status-badge status-${r.recordType}">${r.recordType === "spouse" ? "Spouse" : "Employee"}</span></td>
       <td>
         <span class="status-badge status-${escapeHtml(r.status)}"${r.verificationResult ? ` title="${escapeHtml(r.verificationResult)}"` : ""}>${escapeHtml(r.status)}</span>
         ${r.rejectionReason ? `<span class="rejection-reason" title="${escapeHtml(r.rejectionReason)}">${escapeHtml(r.rejectionReason)}</span>` : ""}
@@ -295,10 +299,10 @@ ${notices.join("\n")}
     <thead>
       <tr>
         <th><input type="checkbox" id="select-all" onclick="toggleAllRows(this)" aria-label="Select all" /></th>
-        <th>Employee</th><th>Email</th><th>Status</th><th>Progress</th><th>Sent</th><th>Received</th><th>Completed</th><th></th>
+        <th>Employee</th><th>Email</th><th>Type</th><th>Status</th><th>Progress</th><th>Sent</th><th>Received</th><th>Completed</th><th></th>
       </tr>
     </thead>
-    <tbody>${rows || `<tr><td colspan="9">No records for this cycle${props.statusFilter ? ` with status "${escapeHtml(props.statusFilter)}"` : ""}.</td></tr>`}</tbody>
+    <tbody>${rows || `<tr><td colspan="10">No records for this cycle${props.statusFilter ? ` with status "${escapeHtml(props.statusFilter)}"` : ""}.</td></tr>`}</tbody>
   </table>
 </form>
 
