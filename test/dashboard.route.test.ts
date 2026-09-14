@@ -520,6 +520,173 @@ describe("POST /dashboard/records/:id/reject", () => {
   });
 });
 
+describe("POST /dashboard/records/:id/approve-spouse", () => {
+  it("marks the spouse form completed independently of the employee's own status", async () => {
+    const prisma = createFakePrisma();
+    const { record } = await seedEmployeeAndRecord(
+      prisma,
+      { status: "needs_review", spouseReceivedAt: new Date() },
+      { needsSpouseForm: true }
+    );
+    const app = createApp(prisma as any, createFakeBlobStorage(), createFakeEmailSender());
+    const agent = request.agent(app);
+    await agent.post("/auth/login").type("form").send({ returnTo: "/dashboard" });
+
+    const res = await agent.post(`/dashboard/records/${record.id}/approve-spouse?year=2026`);
+    expect(res.status).toBe(303);
+    expect(res.headers.location).toBe("/dashboard?year=2026");
+
+    const updated = prisma._state.physicalRecords.find((r: any) => r.id === record.id);
+    expect(updated.spouseStatus).toBe("completed");
+    expect(updated.spouseCompletedAt).toBeInstanceOf(Date);
+    expect(updated.spouseReviewedBy).toBe("dev-hr@standardnutrition.com");
+    // The employee's own status/fields are untouched — the two are reviewed
+    // independently.
+    expect(updated.status).toBe("needs_review");
+  });
+
+  it("requires auth", async () => {
+    const prisma = createFakePrisma();
+    const { record } = await seedEmployeeAndRecord(prisma, { spouseReceivedAt: new Date() }, { needsSpouseForm: true });
+    const app = createApp(prisma as any, createFakeBlobStorage(), createFakeEmailSender());
+
+    const res = await request(app).post(`/dashboard/records/${record.id}/approve-spouse`);
+    expect(res.status).toBe(302);
+    expect(res.headers.location).toMatch(/^\/auth\/login/);
+  });
+
+  it("does not approve the spouse form when the employee is inactive", async () => {
+    const prisma = createFakePrisma();
+    const { record } = await seedEmployeeAndRecord(prisma, { spouseReceivedAt: new Date() }, { needsSpouseForm: true });
+    prisma._state.employeesByEmail.get("jane.doe@example.com").active = false;
+    const app = createApp(prisma as any, createFakeBlobStorage(), createFakeEmailSender());
+    const agent = request.agent(app);
+    await agent.post("/auth/login").type("form").send({ returnTo: "/dashboard" });
+
+    const res = await agent.post(`/dashboard/records/${record.id}/approve-spouse?year=2026`);
+    expect(res.status).toBe(303);
+
+    const updated = prisma._state.physicalRecords.find((r: any) => r.id === record.id);
+    expect(updated.spouseStatus).toBeUndefined();
+  });
+});
+
+describe("POST /dashboard/records/:id/reject-spouse", () => {
+  it("marks the spouse form rejected, clears spouseReceivedAt/spouseCompletedAt, and emails the employee about their spouse's form", async () => {
+    const prisma = createFakePrisma();
+    const emailSender = createFakeEmailSender();
+    const { record } = await seedEmployeeAndRecord(
+      prisma,
+      { spouseReceivedAt: new Date(), rawToken: "existing-raw-token" },
+      { needsSpouseForm: true }
+    );
+    const app = createApp(prisma as any, createFakeBlobStorage(), emailSender);
+    const agent = request.agent(app);
+    await agent.post("/auth/login").type("form").send({ returnTo: "/dashboard" });
+
+    const res = await agent
+      .post(`/dashboard/records/${record.id}/reject-spouse?year=2026`)
+      .type("form")
+      .send({ reason: "Spouse signature is missing." });
+    expect(res.status).toBe(303);
+    expect(res.headers.location).toBe("/dashboard?year=2026");
+
+    const updated = prisma._state.physicalRecords.find((r: any) => r.id === record.id);
+    expect(updated.spouseStatus).toBe("rejected");
+    expect(updated.spouseRejectionReason).toBe("Spouse signature is missing.");
+    expect(updated.spouseReceivedAt).toBeNull();
+    expect(updated.spouseCompletedAt).toBeNull();
+    expect(updated.spouseReviewedBy).toBe("dev-hr@standardnutrition.com");
+    // Rejecting the spouse's form must not touch the employee's own status.
+    expect(updated.status).toBe("sent");
+
+    expect(emailSender.rejectionsSent).toHaveLength(1);
+    expect(emailSender.rejectionsSent[0]).toMatchObject({
+      reason: "Spouse signature is missing.",
+      submitterRole: "spouse",
+      link: expect.stringContaining("/wellness-exam/existing-raw-token"),
+    });
+  });
+
+  it("requires a non-empty reason", async () => {
+    const prisma = createFakePrisma();
+    const { record } = await seedEmployeeAndRecord(prisma, { spouseReceivedAt: new Date() }, { needsSpouseForm: true });
+    const app = createApp(prisma as any, createFakeBlobStorage(), createFakeEmailSender());
+    const agent = request.agent(app);
+    await agent.post("/auth/login").type("form").send({ returnTo: "/dashboard" });
+
+    const res = await agent.post(`/dashboard/records/${record.id}/reject-spouse?year=2026`).type("form").send({ reason: "  " });
+    expect(res.status).toBe(400);
+  });
+
+  it("requires auth", async () => {
+    const prisma = createFakePrisma();
+    const { record } = await seedEmployeeAndRecord(prisma, { spouseReceivedAt: new Date() }, { needsSpouseForm: true });
+    const app = createApp(prisma as any, createFakeBlobStorage(), createFakeEmailSender());
+
+    const res = await request(app).post(`/dashboard/records/${record.id}/reject-spouse`).type("form").send({ reason: "x" });
+    expect(res.status).toBe(302);
+    expect(res.headers.location).toMatch(/^\/auth\/login/);
+  });
+});
+
+describe("Dashboard: separate employee/spouse status and actions", () => {
+  it("shows independent status badges, and Approve/Reject buttons, for employee vs spouse forms", async () => {
+    const prisma = createFakePrisma();
+    const { record } = await seedEmployeeAndRecord(
+      prisma,
+      { status: "needs_review", spouseReceivedAt: new Date(), spouseStatus: "received" },
+      { needsSpouseForm: true }
+    );
+    const app = createApp(prisma as any, createFakeBlobStorage(), createFakeEmailSender());
+    const agent = request.agent(app);
+    await agent.post("/auth/login").type("form").send({ returnTo: "/dashboard" });
+
+    const res = await agent.get("/dashboard?year=2026");
+    expect(res.status).toBe(200);
+    // Employee-side actions, disambiguated with "Employee" once a spouse
+    // form is also in play.
+    expect(res.text).toContain("Approve Employee");
+    expect(res.text).toContain("Reject Employee");
+    // Spouse-side actions.
+    expect(res.text).toContain(`records/${record.id}/approve-spouse?`);
+    expect(res.text).toContain("Approve Spouse");
+    expect(res.text).toContain("Reject Spouse");
+    // Both statuses rendered independently.
+    expect(res.text).toContain("needs_review");
+    expect(res.text).toMatch(/Spouse:.*received/s);
+  });
+
+  it("hides spouse Approve/Reject once the spouse form has already been decided", async () => {
+    const prisma = createFakePrisma();
+    const { record } = await seedEmployeeAndRecord(
+      prisma,
+      { spouseReceivedAt: new Date(), spouseStatus: "completed" },
+      { needsSpouseForm: true }
+    );
+    const app = createApp(prisma as any, createFakeBlobStorage(), createFakeEmailSender());
+    const agent = request.agent(app);
+    await agent.post("/auth/login").type("form").send({ returnTo: "/dashboard" });
+
+    const res = await agent.get("/dashboard?year=2026");
+    expect(res.text).not.toContain(`records/${record.id}/approve-spouse?`);
+    expect(res.text).not.toContain("Reject Spouse");
+  });
+
+  it("hides spouse Approve/Reject until the spouse form is actually received", async () => {
+    const prisma = createFakePrisma();
+    const { record } = await seedEmployeeAndRecord(prisma, { spouseReceivedAt: null }, { needsSpouseForm: true });
+    const app = createApp(prisma as any, createFakeBlobStorage(), createFakeEmailSender());
+    const agent = request.agent(app);
+    await agent.post("/auth/login").type("form").send({ returnTo: "/dashboard" });
+
+    const res = await agent.get("/dashboard?year=2026");
+    expect(res.text).not.toContain(`records/${record.id}/approve-spouse?`);
+    expect(res.text).not.toContain("Reject Spouse");
+    expect(res.text).toContain("not received");
+  });
+});
+
 describe("Dashboard bulk actions", () => {
   it("bulk-approves selected records", async () => {
     const prisma = createFakePrisma();
@@ -787,7 +954,7 @@ describe("GET /dashboard/export", () => {
 
     const lines = res.text.trim().split("\n");
     expect(lines[0]).toBe(
-      "Employee,Email,Status,Sent,Received,Completed,Needs Spouse Form,Spouse Received,Verification Result,Rejection Reason"
+      "Employee,Email,Status,Sent,Received,Completed,Needs Spouse Form,Spouse Received,Verification Result,Rejection Reason,Spouse Status,Spouse Rejection Reason"
     );
     expect(lines[1]).toContain("Jane Doe");
     expect(lines[1]).toContain("jane.doe@example.com");

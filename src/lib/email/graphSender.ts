@@ -144,6 +144,7 @@ export class GraphEmailSender implements EmailSender {
   }
 
   async sendRejection(email: RejectionEmail): Promise<void> {
+    const whoseForm = email.submitterRole === "spouse" ? "your spouse's" : "your";
     await this.client.api(`/users/${this.senderAddress}/sendMail`).post({
       message: {
         subject: `${email.cycleYear} Wellness Exam Verification — Needs Attention`,
@@ -153,12 +154,12 @@ export class GraphEmailSender implements EmailSender {
             <div style="font-family: Arial, sans-serif; color: #2C2A29;">
               ${this.brandHeader()}
               <p>Hi ${escapeHtml(email.toName)},</p>
-              <p>HR reviewed your ${email.cycleYear} Wellness Exam Verification form submission and
+              <p>HR reviewed ${whoseForm} ${email.cycleYear} Wellness Exam Verification form submission and
               it couldn't be accepted as-is:</p>
               <p style="background: #FBE9E8; border: 1px solid #F0C3C0; border-radius: 6px; padding: 0.75rem 1rem; color: #9A3324;">
                 ${escapeHtml(email.reason)}
               </p>
-              <p>Please use the link below to review and resubmit your form:</p>
+              <p>Please use the link below to review and resubmit ${email.submitterRole === "spouse" ? "the" : "your"} form:</p>
               <p><a href="${email.link}" style="color: #DA291C;">${email.link}</a></p>
               ${this.brandFooter()}
             </div>

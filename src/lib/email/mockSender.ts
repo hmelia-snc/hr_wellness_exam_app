@@ -16,7 +16,7 @@ export class MockEmailSender implements EmailSender {
 
   async sendRejection(email: RejectionEmail): Promise<void> {
     console.log(
-      `[mock-email] Rejection to: ${email.toName} <${email.toEmail}> (cc HR) | ${email.cycleYear} | reason="${email.reason}" | link=${email.link}`
+      `[mock-email] Rejection to: ${email.toName} <${email.toEmail}> (cc HR) | ${email.cycleYear} | submitterRole=${email.submitterRole} | reason="${email.reason}" | link=${email.link}`
     );
   }
 }

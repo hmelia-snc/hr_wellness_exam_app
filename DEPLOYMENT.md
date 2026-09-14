@@ -204,6 +204,25 @@ verification needs `DOCUMENT_INTELLIGENCE_ENDPOINT`/`DOCUMENT_INTELLIGENCE_KEY`,
 which the provisioning script generates automatically (F0 free tier: 500
 pages/month, well above what one company's annual physical cycle needs).
 
+## Employee and spouse forms are reviewed independently
+
+The four OCR checks above only ever run on the *employee's* own upload —
+the spouse's file (when `Employee.needsSpouseForm` is set) has never gone
+through OCR, and originally had no review state at all beyond "a file is
+there or it isn't." HR now approves or rejects each side separately from
+the dashboard: **Approve Employee**/**Reject Employee** for the OCR-checked
+upload (unchanged — labeled plain "Approve"/"Reject" when there's no spouse
+form to disambiguate from), and **Approve Spouse**/**Reject Spouse** for the
+spouse's, tracked in its own `spouseStatus`/`spouseRejectionReason`/etc.
+fields (`prisma/schema.prisma`) rather than reusing the employee's. Rejecting
+either side clears that side's `receivedAt` (so progress correctly reverts
+to "not received") and emails the employee — who resubmits through the same
+existing link either way, since the spouse has no separate login of their
+own — with wording that says which side needs fixing
+(`RejectionEmail.submitterRole`). A resubmission on either side also clears
+that side's stale rejection reason, so a corrected-and-approved form doesn't
+keep showing an old rejection message on the dashboard.
+
 ## File access audit log and CSV export
 
 Every time an uploaded form is viewed — HR opening it from the dashboard's

@@ -15,6 +15,9 @@ export interface DashboardRecordRow {
   spouseReceivedAt: Date | null;
   verificationResult: string | null;
   rejectionReason: string | null;
+  spouseStatus: string | null;
+  spouseVerificationResult: string | null;
+  spouseRejectionReason: string | null;
   hasUploadedFile: boolean;
   hasSpouseFile: boolean;
 }
@@ -54,6 +57,9 @@ const EXTRA_STYLES = `
   .status-needs_review { background: ${BRAND.redTint10}; color: ${BRAND.darkRed}; }
   .status-rejected { background: ${BRAND.red}; color: #fff; }
   .status-completed { background: #d9f2d9; color: #1e6b1e; }
+  .status-not_received { background: #eaeaea; color: #888; }
+  .spouse-status-row { margin-top: 0.3rem; font-size: 0.75rem; color: #666; }
+  .spouse-status-row .status-badge { font-size: 0.72rem; padding: 0.1rem 0.5rem; }
   .filters { margin: 1rem 0; }
   .filters a { margin-right: 0.9rem; text-decoration: none; color: ${BRAND.red}; font-weight: 500; }
   .filters a.active { text-decoration: underline; }
@@ -118,6 +124,8 @@ const EXTRA_STYLES = `
   @media (prefers-color-scheme: dark) {
     th, td { border-bottom-color: #3a3836; }
     .status-sent { background: #333230; color: #ccc; }
+    .status-not_received { background: #333230; color: #999; }
+    .spouse-status-row { color: #999; }
     .session-line { color: #aaa; }
     .inactive-note { color: #999; }
     .year-select-form select { background: #232120; color: #ededed; border-color: #45423f; }
@@ -152,6 +160,12 @@ export function renderDashboardPage(props: DashboardPageProps): string {
       <td>
         <span class="status-badge status-${escapeHtml(r.status)}"${r.verificationResult ? ` title="${escapeHtml(r.verificationResult)}"` : ""}>${escapeHtml(r.status)}</span>
         ${r.rejectionReason ? `<span class="rejection-reason" title="${escapeHtml(r.rejectionReason)}">${escapeHtml(r.rejectionReason)}</span>` : ""}
+        ${
+          r.needsSpouseForm
+            ? `<div class="spouse-status-row">Spouse: <span class="status-badge status-${escapeHtml(r.spouseStatus ?? "not_received")}"${r.spouseVerificationResult ? ` title="${escapeHtml(r.spouseVerificationResult)}"` : ""}>${escapeHtml((r.spouseStatus ?? "not_received").replace(/_/g, " "))}</span></div>
+        ${r.spouseRejectionReason ? `<span class="rejection-reason" title="${escapeHtml(r.spouseRejectionReason)}">${escapeHtml(r.spouseRejectionReason)}</span>` : ""}`
+            : ""
+        }
       </td>
       <td>
         ${progressLabel(r)}
@@ -170,12 +184,22 @@ export function renderDashboardPage(props: DashboardPageProps): string {
         }
         ${
           r.employeeActive && r.status === "needs_review"
-            ? `<button type="submit" formaction="/dashboard/records/${encodeURIComponent(r.id)}/approve?${qs}" formmethod="post" class="small-button">Approve</button>`
+            ? `<button type="submit" formaction="/dashboard/records/${encodeURIComponent(r.id)}/approve?${qs}" formmethod="post" class="small-button">${r.needsSpouseForm ? "Approve Employee" : "Approve"}</button>`
             : ""
         }
         ${
           r.employeeActive && r.status !== "rejected" && r.status !== "completed"
-            ? `<button type="button" class="small-button" onclick="openRejectModal(${escapeHtml(JSON.stringify([r.id]))}, ${escapeHtml(JSON.stringify(r.employeeName))})">Reject</button>`
+            ? `<button type="button" class="small-button" onclick="openRejectModal(${escapeHtml(JSON.stringify([r.id]))}, ${escapeHtml(JSON.stringify(r.employeeName))}, 'employee')">${r.needsSpouseForm ? "Reject Employee" : "Reject"}</button>`
+            : ""
+        }
+        ${
+          r.employeeActive && r.needsSpouseForm && r.spouseReceivedAt && r.spouseStatus !== "completed" && r.spouseStatus !== "rejected"
+            ? `<button type="submit" formaction="/dashboard/records/${encodeURIComponent(r.id)}/approve-spouse?${qs}" formmethod="post" class="small-button">Approve Spouse</button>`
+            : ""
+        }
+        ${
+          r.employeeActive && r.needsSpouseForm && r.spouseReceivedAt && r.spouseStatus !== "completed" && r.spouseStatus !== "rejected"
+            ? `<button type="button" class="small-button" onclick="openRejectModal(${escapeHtml(JSON.stringify([r.id]))}, ${escapeHtml(JSON.stringify(r.employeeName))}, 'spouse')">Reject Spouse</button>`
             : ""
         }
       </td>
@@ -294,10 +318,11 @@ ${notices.join("\n")}
     }
     return confirm(action.charAt(0).toUpperCase() + action.slice(1) + ' ' + ids.length + ' record(s)?');
   }
-  function openRejectModal(ids, targetName) {
+  function openRejectModal(ids, targetName, side) {
+    var isSpouse = side === 'spouse';
     var form = document.getElementById('reject-form');
     form.action = ids.length === 1
-      ? '/dashboard/records/' + encodeURIComponent(ids[0]) + '/reject?${qs}'
+      ? '/dashboard/records/' + encodeURIComponent(ids[0]) + (isSpouse ? '/reject-spouse' : '/reject') + '?${qs}'
       : '/dashboard/bulk/reject?${qs}';
     var container = document.getElementById('reject-ids-container');
     container.innerHTML = '';
@@ -310,7 +335,8 @@ ${notices.join("\n")}
         container.appendChild(input);
       });
     }
-    document.getElementById('reject-target-name').textContent = targetName || (ids.length + ' record(s)');
+    var nameLabel = targetName || (ids.length + ' record(s)');
+    document.getElementById('reject-target-name').textContent = nameLabel + (isSpouse ? "'s spouse form" : '');
     document.getElementById('reject-count').textContent = ids.length > 1 ? ('This reason will be emailed to all ' + ids.length + ' employees.') : '';
     document.getElementById('reject-reason').value = '';
     document.getElementById('reject-dialog').showModal();
@@ -321,7 +347,7 @@ ${notices.join("\n")}
       alert('Select at least one record first.');
       return;
     }
-    openRejectModal(ids, null);
+    openRejectModal(ids, null, 'employee');
   }
 </script>
 `;

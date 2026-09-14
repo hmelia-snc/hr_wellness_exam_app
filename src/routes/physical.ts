@@ -163,6 +163,9 @@ export function createPhysicalRouter(
               uploadedContentType: formFile.mimetype,
               status: "received",
               receivedAt: new Date(),
+              // A resubmission after a rejection clears the old reason —
+              // it's no longer accurate once a new file is in for review.
+              rejectionReason: null,
             },
           });
 
@@ -212,6 +215,10 @@ export function createPhysicalRouter(
               spouseUploadedBlobPath: blobPath,
               spouseUploadedContentType: spouseFile.mimetype,
               spouseReceivedAt: new Date(),
+              spouseStatus: "received",
+              // A resubmission after a rejection clears the old reason —
+              // it's no longer accurate once a new file is in for review.
+              spouseRejectionReason: null,
             },
           });
 

@@ -144,7 +144,9 @@ async function resetRecordWithFreshToken(prisma: PrismaClient, physicalRecordId:
 /**
  * Manually marks a record `completed` — the same transition the OCR pass
  * applies automatically, just triggered by HR instead. Shared by the
- * single-record and bulk "Approve" actions.
+ * single-record and bulk "Approve" actions. This is specifically the
+ * employee's own upload; see approveSpouseForm for the spouse's, tracked
+ * independently since the two are reviewed separately.
  */
 export async function approveRecord(prisma: PrismaClient, physicalRecordId: string, reviewedBy: string): Promise<void> {
   await prisma.physicalRecord.update({
@@ -155,6 +157,25 @@ export async function approveRecord(prisma: PrismaClient, physicalRecordId: stri
       reviewedBy,
       reviewedAt: new Date(),
       verificationResult: `Manually approved by ${reviewedBy}.`,
+    },
+  });
+}
+
+/**
+ * Same as approveRecord, but for the spouse's upload — tracked in its own
+ * set of fields (spouseStatus/spouseCompletedAt/etc.) since HR reviews each
+ * side of the form independently. No OCR ever runs on the spouse's upload,
+ * so this manual approval is the only way it ever reaches "completed".
+ */
+export async function approveSpouseForm(prisma: PrismaClient, physicalRecordId: string, reviewedBy: string): Promise<void> {
+  await prisma.physicalRecord.update({
+    where: { id: physicalRecordId },
+    data: {
+      spouseStatus: "completed",
+      spouseCompletedAt: new Date(),
+      spouseReviewedBy: reviewedBy,
+      spouseReviewedAt: new Date(),
+      spouseVerificationResult: `Manually approved by ${reviewedBy}.`,
     },
   });
 }
@@ -254,6 +275,9 @@ export interface RejectRecordResult {
  * "View file". Reuses the employee's existing link rather than invalidating
  * it (same as getShareableLink), so they can fix and resubmit with the link
  * they already have — only falls back to a fresh token if theirs expired.
+ * This is specifically the employee's own upload; see rejectSpouseForm for
+ * the spouse's, tracked independently since the two are reviewed
+ * separately.
  */
 export async function rejectRecord(
   prisma: PrismaClient,
@@ -283,11 +307,58 @@ export async function rejectRecord(
       cycleYear: linkResult.cycleYear,
       reason,
       link: linkResult.link,
+      submitterRole: "employee",
     });
     return { emailSent: true };
   } catch (err) {
     const emailError = err instanceof Error ? err.message : String(err);
     console.error(`[rejectRecord] email send failed for record ${physicalRecordId} (${linkResult.employeeEmail}):`, emailError);
+    return { emailSent: false, emailError };
+  }
+}
+
+/**
+ * Same as rejectRecord, but for the spouse's upload: marks spouseStatus
+ * `rejected`, clears spouseReceivedAt/spouseCompletedAt (leaving the
+ * uploaded blob alone so HR can still view what was rejected), and emails
+ * the employee — the spouse has no separate email/link of their own, so the
+ * same "your spouse's form" email goes to the employee's address, with
+ * their shared existing link to resubmit through.
+ */
+export async function rejectSpouseForm(
+  prisma: PrismaClient,
+  emailSender: EmailSender,
+  physicalRecordId: string,
+  reason: string,
+  reviewedBy: string
+): Promise<RejectRecordResult> {
+  const linkResult = await getShareableLink(prisma, physicalRecordId);
+
+  await prisma.physicalRecord.update({
+    where: { id: physicalRecordId },
+    data: {
+      spouseStatus: "rejected",
+      spouseRejectionReason: reason,
+      spouseReceivedAt: null,
+      spouseCompletedAt: null,
+      spouseReviewedBy: reviewedBy,
+      spouseReviewedAt: new Date(),
+    },
+  });
+
+  try {
+    await emailSender.sendRejection({
+      toEmail: linkResult.employeeEmail,
+      toName: linkResult.employeeName,
+      cycleYear: linkResult.cycleYear,
+      reason,
+      link: linkResult.link,
+      submitterRole: "spouse",
+    });
+    return { emailSent: true };
+  } catch (err) {
+    const emailError = err instanceof Error ? err.message : String(err);
+    console.error(`[rejectSpouseForm] email send failed for record ${physicalRecordId} (${linkResult.employeeEmail}):`, emailError);
     return { emailSent: false, emailError };
   }
 }

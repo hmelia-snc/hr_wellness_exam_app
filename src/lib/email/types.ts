@@ -29,6 +29,10 @@ export interface RejectionEmail {
   // The employee's existing (unchanged) upload link, so they can fix and
   // resubmit without needing a new one.
   link: string;
+  // Which side of the form was rejected — HR can now reject the employee's
+  // own upload and the spouse's independently, and the email needs to say
+  // which one so the recipient knows what to fix.
+  submitterRole: "employee" | "spouse";
 }
 
 export interface EmailSender {

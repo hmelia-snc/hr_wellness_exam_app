@@ -5,7 +5,14 @@ import { renderDashboardPage } from "../views/dashboardPage.js";
 import { renderShareableLinkPage } from "../views/shareableLinkPage.js";
 import type { EmailSender } from "../lib/email/types.js";
 import type { BlobStorage } from "../lib/blobStorage.js";
-import { resendLink, getShareableLink, rejectRecord, approveRecord } from "../services/employeeActions.js";
+import {
+  resendLink,
+  getShareableLink,
+  rejectRecord,
+  approveRecord,
+  approveSpouseForm,
+  rejectSpouseForm,
+} from "../services/employeeActions.js";
 import { recordFileAccess } from "../services/fileAccessLog.js";
 import { buildCsv } from "../lib/csv.js";
 import { toIdArray } from "../lib/requestArrays.js";
@@ -99,6 +106,9 @@ export function createDashboardRouter(prisma: PrismaClient, emailSender: EmailSe
             spouseReceivedAt: record.spouseReceivedAt,
             verificationResult: record.verificationResult,
             rejectionReason: record.rejectionReason,
+            spouseStatus: record.spouseStatus,
+            spouseVerificationResult: record.spouseVerificationResult,
+            spouseRejectionReason: record.spouseRejectionReason,
             hasUploadedFile: Boolean(record.uploadedBlobPath),
             hasSpouseFile: Boolean(record.spouseUploadedBlobPath),
           })),
@@ -132,6 +142,8 @@ export function createDashboardRouter(prisma: PrismaClient, emailSender: EmailSe
           "Spouse Received",
           "Verification Result",
           "Rejection Reason",
+          "Spouse Status",
+          "Spouse Rejection Reason",
         ],
         records.map((r) => [
           r.employee.fullName,
@@ -144,6 +156,8 @@ export function createDashboardRouter(prisma: PrismaClient, emailSender: EmailSe
           formatDate(r.spouseReceivedAt),
           r.verificationResult ?? "",
           r.rejectionReason ?? "",
+          r.employee.needsSpouseForm ? r.spouseStatus ?? "not received" : "",
+          r.spouseRejectionReason ?? "",
         ])
       );
 
@@ -225,6 +239,37 @@ export function createDashboardRouter(prisma: PrismaClient, emailSender: EmailSe
         return;
       }
       const result = await rejectRecord(prisma, emailSender, req.params.id, reason, req.session.hrUser!.email);
+      res.redirect(303, backToDashboardHref(req, result.emailSent ? {} : { rejectEmailFailed: "1" }));
+    } catch (err) {
+      next(err);
+    }
+  });
+
+  router.post("/records/:id/approve-spouse", requireHrAuth, async (req: Request, res: Response, next: NextFunction) => {
+    try {
+      if (!(await isRecordsEmployeeActive(prisma, req.params.id))) {
+        res.redirect(303, backToDashboardHref(req));
+        return;
+      }
+      await approveSpouseForm(prisma, req.params.id, req.session.hrUser!.email);
+      res.redirect(303, backToDashboardHref(req));
+    } catch (err) {
+      next(err);
+    }
+  });
+
+  router.post("/records/:id/reject-spouse", requireHrAuth, async (req: Request, res: Response, next: NextFunction) => {
+    try {
+      if (!(await isRecordsEmployeeActive(prisma, req.params.id))) {
+        res.redirect(303, backToDashboardHref(req));
+        return;
+      }
+      const reason = typeof req.body?.reason === "string" ? req.body.reason.trim() : "";
+      if (!reason) {
+        res.status(400).send("A rejection reason is required.");
+        return;
+      }
+      const result = await rejectSpouseForm(prisma, emailSender, req.params.id, reason, req.session.hrUser!.email);
       res.redirect(303, backToDashboardHref(req, result.emailSent ? {} : { rejectEmailFailed: "1" }));
     } catch (err) {
       next(err);

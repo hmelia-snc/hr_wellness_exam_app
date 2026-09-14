@@ -52,6 +52,17 @@ model PhysicalRecord {
   rejectionReason    String?
   reviewedBy         String?
   reviewedAt         DateTime?
+  // Mirror of the fields above, but for the spouse's own upload — HR reviews
+  // and approves/rejects each side of the form independently now, rather
+  // than the spouse's file just sitting there with no review state at all.
+  // No auto-OCR check runs on it (only the employee's own upload gets that);
+  // this is manual-review-only for now.
+  spouseStatus             String?
+  spouseVerificationResult String?
+  spouseRejectionReason    String?
+  spouseReviewedBy         String?
+  spouseReviewedAt        DateTime?
+  spouseCompletedAt       DateTime?
   createdAt          DateTime  @default(now())
   updatedAt          DateTime  @updatedAt
 

@@ -299,7 +299,38 @@ describe("POST /wellness-exam/:token/upload with a spouse form", () => {
     expect(updated.receivedAt).toBeUndefined();
     expect(updated.spouseReceivedAt).toBeInstanceOf(Date);
     expect(updated.spouseUploadedContentType).toBe("application/pdf");
+    // Regression: the spouse side needs its own "received" status so HR's
+    // dashboard can show it's actually pending review, not just that a file
+    // exists — this was missed on the first pass (upload set
+    // spouseReceivedAt/spouseUploadedBlobPath but never spouseStatus, so the
+    // dashboard kept showing "not received" even after a real upload).
+    expect(updated.spouseStatus).toBe("received");
     expect(blobStorage.uploads[0].blobPath).toContain("spouse-");
+  });
+
+  it("clears a stale rejection reason on either side when that side is resubmitted", async () => {
+    const prisma = createFakePrisma();
+    const { rawToken, record } = await seedRecord(
+      prisma,
+      { rejectionReason: "Old employee-side reason", spouseRejectionReason: "Old spouse-side reason", spouseStatus: "rejected" },
+      { needsSpouseForm: true }
+    );
+    const blobStorage = createFakeBlobStorage();
+    const app = createApp(prisma as any, blobStorage, createFakeEmailSender());
+
+    const res = await request(app)
+      .post(`/wellness-exam/${rawToken}/upload`)
+      .attach("form", Buffer.from("%PDF-1.4 employee content"), { filename: "mine.pdf", contentType: "application/pdf" })
+      .attach("spouseForm", Buffer.from("%PDF-1.4 spouse content"), {
+        filename: "spouse.pdf",
+        contentType: "application/pdf",
+      });
+
+    expect(res.status).toBe(303);
+    const updated = prisma._state.physicalRecords.find((r: any) => r.id === record.id);
+    expect(updated.rejectionReason).toBeNull();
+    expect(updated.spouseRejectionReason).toBeNull();
+    expect(updated.spouseStatus).toBe("received");
   });
 
   it("accepts both files in the same request", async () => {
