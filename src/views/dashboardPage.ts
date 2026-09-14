@@ -184,12 +184,12 @@ export function renderDashboardPage(props: DashboardPageProps): string {
         }
         ${
           r.employeeActive && r.status === "needs_review"
-            ? `<button type="submit" formaction="/dashboard/records/${encodeURIComponent(r.id)}/approve?${qs}" formmethod="post" class="small-button">${r.needsSpouseForm ? "Approve Employee" : "Approve"}</button>`
+            ? `<button type="submit" formaction="/dashboard/records/${encodeURIComponent(r.id)}/approve?${qs}" formmethod="post" class="small-button">Approve Employee</button>`
             : ""
         }
         ${
           r.employeeActive && r.status !== "rejected" && r.status !== "completed"
-            ? `<button type="button" class="small-button" onclick="openRejectModal(${escapeHtml(JSON.stringify([r.id]))}, ${escapeHtml(JSON.stringify(r.employeeName))}, 'employee')">${r.needsSpouseForm ? "Reject Employee" : "Reject"}</button>`
+            ? `<button type="button" class="small-button" onclick="openRejectModal(${escapeHtml(JSON.stringify([r.id]))}, ${escapeHtml(JSON.stringify(r.employeeName))}, 'employee')">Reject Employee</button>`
             : ""
         }
         ${

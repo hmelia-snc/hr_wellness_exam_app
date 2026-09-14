@@ -384,6 +384,22 @@ describe("POST /dashboard/records/:id/approve", () => {
     expect(res.text).toContain('title="No handwritten signature detected');
   });
 
+  // Regression: the button used to read plain "Approve"/"Reject" when the
+  // employee had no spouse form, only switching to "Approve Employee" once
+  // a spouse form was also in play — now it's always labeled "Employee" so
+  // it visually stands out from the separate spouse actions regardless.
+  it("always labels employee-side actions 'Approve Employee'/'Reject Employee', even with no spouse form", async () => {
+    const prisma = createFakePrisma();
+    await seedEmployeeAndRecord(prisma, { status: "needs_review" });
+    const app = createApp(prisma as any, createFakeBlobStorage(), createFakeEmailSender());
+    const agent = request.agent(app);
+    await agent.post("/auth/login").type("form").send({ returnTo: "/dashboard" });
+
+    const res = await agent.get("/dashboard?year=2026");
+    expect(res.text).toContain(">Approve Employee<");
+    expect(res.text).toContain(">Reject Employee<");
+  });
+
   it("hides the Approve button and does not approve when the employee is inactive, even via a direct POST", async () => {
     const prisma = createFakePrisma();
     const { record } = await seedEmployeeAndRecord(prisma, { status: "needs_review" });
