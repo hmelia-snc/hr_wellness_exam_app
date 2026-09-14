@@ -830,6 +830,64 @@ describe("GET /dashboard progress column", () => {
   });
 });
 
+describe("Dashboard: linked spouse roster records show as their own row", () => {
+  it("shows a linked spouse's own PhysicalRecord as a separate row with a 'Spouse of X' annotation", async () => {
+    const prisma = createFakePrisma();
+    const { employee } = await seedEmployeeAndRecord(prisma);
+    const spouse = await prisma.employee.create({
+      data: { fullName: "John Doe", recordType: "spouse", linkedEmployeeId: employee.id, active: true },
+    });
+    prisma._state.physicalRecords.push({
+      id: "spouse-rec-1",
+      employeeId: spouse.id,
+      cycleYear: 2026,
+      tokenHash: "spouse-hash",
+      tokenExpiresAt: new Date(Date.now() + 1000 * 60 * 60 * 24 * 30),
+      status: "sent",
+      createdAt: new Date(),
+    });
+    const app = createApp(prisma as any, createFakeBlobStorage(), createFakeEmailSender());
+    const agent = request.agent(app);
+    await agent.post("/auth/login").type("form").send({ returnTo: "/dashboard" });
+
+    const res = await agent.get("/dashboard?year=2026");
+    expect(res.text).toContain("John Doe");
+    expect(res.text).toContain("Spouse of Jane Doe");
+    // The spouse row's own actions use the regular /approve /reject routes,
+    // just labeled for the spouse rather than "via" the old spouse* fields.
+    expect(res.text).toContain("Submitted via Jane Doe's link");
+  });
+
+  it("labels a linked spouse row's approve/reject actions 'Approve Spouse'/'Reject Spouse'", async () => {
+    const prisma = createFakePrisma();
+    const { employee } = await seedEmployeeAndRecord(prisma);
+    const spouse = await prisma.employee.create({
+      data: { fullName: "John Doe", recordType: "spouse", linkedEmployeeId: employee.id, active: true },
+    });
+    prisma._state.physicalRecords.push({
+      id: "spouse-rec-2",
+      employeeId: spouse.id,
+      cycleYear: 2026,
+      tokenHash: "spouse-hash-2",
+      tokenExpiresAt: new Date(Date.now() + 1000 * 60 * 60 * 24 * 30),
+      status: "needs_review",
+      createdAt: new Date(),
+    });
+    const app = createApp(prisma as any, createFakeBlobStorage(), createFakeEmailSender());
+    const agent = request.agent(app);
+    await agent.post("/auth/login").type("form").send({ returnTo: "/dashboard" });
+
+    const res = await agent.get("/dashboard?year=2026");
+    expect(res.text).toContain(">Approve Spouse<");
+    expect(res.text).toContain(">Reject Spouse<");
+
+    const approveRes = await agent.post("/dashboard/records/spouse-rec-2/approve");
+    expect(approveRes.status).toBe(303);
+    const updated = prisma._state.physicalRecords.find((r: any) => r.id === "spouse-rec-2");
+    expect(updated.status).toBe("completed");
+  });
+});
+
 describe("GET /dashboard/records/:id/file", () => {
   it("streams the employee's uploaded file and logs who viewed it", async () => {
     const prisma = createFakePrisma();
@@ -970,7 +1028,7 @@ describe("GET /dashboard/export", () => {
 
     const lines = res.text.trim().split("\n");
     expect(lines[0]).toBe(
-      "Employee,Email,Status,Sent,Received,Completed,Needs Spouse Form,Spouse Received,Verification Result,Rejection Reason,Spouse Status,Spouse Rejection Reason"
+      "Employee,Email,Record Type,Status,Sent,Received,Completed,Needs Spouse Form,Spouse Received,Verification Result,Rejection Reason,Spouse Status,Spouse Rejection Reason"
     );
     expect(lines[1]).toContain("Jane Doe");
     expect(lines[1]).toContain("jane.doe@example.com");

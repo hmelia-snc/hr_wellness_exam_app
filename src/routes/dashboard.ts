@@ -67,7 +67,7 @@ export function createDashboardRouter(prisma: PrismaClient, emailSender: EmailSe
       const [records, distinctYears] = await Promise.all([
         prisma.physicalRecord.findMany({
           where: { cycleYear, ...(statusFilter ? { status: statusFilter } : {}) },
-          include: { employee: true },
+          include: { employee: { include: { linkedEmployee: { select: { fullName: true } } } } },
           orderBy: { createdAt: "asc" },
         }),
         prisma.physicalRecord.findMany({ select: { cycleYear: true }, distinct: ["cycleYear"] }),
@@ -98,6 +98,8 @@ export function createDashboardRouter(prisma: PrismaClient, emailSender: EmailSe
             employeeName: record.employee.fullName,
             employeeEmail: record.employee.email,
             employeeActive: record.employee.active,
+            recordType: record.employee.recordType === "spouse" ? ("spouse" as const) : ("employee" as const),
+            linkedEmployeeName: record.employee.linkedEmployee?.fullName ?? null,
             status: record.status,
             sentAt: record.sentAt,
             receivedAt: record.receivedAt,
@@ -134,6 +136,7 @@ export function createDashboardRouter(prisma: PrismaClient, emailSender: EmailSe
         [
           "Employee",
           "Email",
+          "Record Type",
           "Status",
           "Sent",
           "Received",
@@ -147,7 +150,8 @@ export function createDashboardRouter(prisma: PrismaClient, emailSender: EmailSe
         ],
         records.map((r) => [
           r.employee.fullName,
-          r.employee.email,
+          r.employee.email ?? "",
+          r.employee.recordType === "spouse" ? "spouse" : "employee",
           r.status,
           formatDate(r.sentAt),
           formatDate(r.receivedAt),

@@ -1,7 +1,7 @@
 import type { PrismaClient } from "@prisma/client";
 import { parseEmployeeCsv, type CsvRowError } from "../lib/csv.js";
 import type { EmailSender } from "../lib/email/types.js";
-import { upsertEmployeeAndSendLink } from "./employeeActions.js";
+import { upsertEmployeeAndSendLink, upsertSpouseRecord } from "./employeeActions.js";
 
 export interface ImportCycleOptions {
   csvContent: string;
@@ -16,14 +16,24 @@ export interface ImportCycleResult {
   recordsSkippedExisting: number;
   emailsSent: number;
   emailFailures: { email: string; error: string }[];
+  spousesLinked: number;
+  spouseLinkErrors: { line: number; message: string }[];
 }
 
 /**
- * Imports a CSV of employees for a physical-form cycle: each row goes
- * through upsertEmployeeAndSendLink (upsert employee, create+email a fresh
- * record unless one already exists for this cycleYear — re-running an
- * import is a no-op for employees already in progress), then the batch is
- * recorded.
+ * Imports a CSV of employee and spouse rows for a physical-form cycle.
+ * Two passes, since a spouse row's linked_employee_email may point at an
+ * employee row earlier OR later in the same file:
+ *   1. Every "employee" row goes through upsertEmployeeAndSendLink (upsert
+ *      employee, create+email a fresh record unless one already exists for
+ *      this cycleYear — re-running an import is a no-op for employees
+ *      already in progress).
+ *   2. Every "spouse" row is then resolved against linked_employee_email —
+ *      against an employee just upserted in pass 1, or one already in the
+ *      DB from an earlier import — via upsertSpouseRecord. A row whose
+ *      linked_employee_email doesn't match any known employee is recorded
+ *      in spouseLinkErrors rather than thrown, same "one bad row doesn't
+ *      sink the batch" approach as the CSV parser itself.
  */
 export async function importCycle(
   prisma: PrismaClient,
@@ -37,10 +47,13 @@ export async function importCycle(
   let emailsSent = 0;
   const emailFailures: { email: string; error: string }[] = [];
 
-  for (const row of rows) {
+  const employeeRows = rows.filter((row) => row.recordType === "employee");
+  const spouseRows = rows.filter((row) => row.recordType === "spouse");
+
+  for (const row of employeeRows) {
     const result = await upsertEmployeeAndSendLink(prisma, emailSender, {
       fullName: row.fullName,
-      email: row.email,
+      email: row.email!,
       employeeIdExternal: row.employeeIdExternal,
       cycleYear: options.cycleYear,
       needsSpouseForm: row.needsSpouseForm,
@@ -54,8 +67,33 @@ export async function importCycle(
     if (result.emailSent) {
       emailsSent += 1;
     } else if (result.emailError) {
-      emailFailures.push({ email: row.email, error: result.emailError });
+      emailFailures.push({ email: row.email!, error: result.emailError });
     }
+  }
+
+  let spousesLinked = 0;
+  const spouseLinkErrors: { line: number; message: string }[] = [];
+  // Line numbers for these errors aren't tracked per-row past parsing, so
+  // report them by the spouse's own name instead — still enough for HR to
+  // find and fix the offending row.
+  for (const row of spouseRows) {
+    const linkedEmployee = await prisma.employee.findUnique({ where: { email: row.linkedEmployeeEmail } });
+    if (!linkedEmployee || linkedEmployee.recordType !== "employee") {
+      spouseLinkErrors.push({
+        line: 0,
+        message: `${row.fullName}: no employee found with email "${row.linkedEmployeeEmail}"`,
+      });
+      continue;
+    }
+
+    await upsertSpouseRecord(prisma, {
+      fullName: row.fullName,
+      email: row.email,
+      employeeIdExternal: row.employeeIdExternal,
+      linkedEmployeeId: linkedEmployee.id,
+      cycleYear: options.cycleYear,
+    });
+    spousesLinked += 1;
   }
 
   await prisma.uploadBatch.create({
@@ -69,5 +107,7 @@ export async function importCycle(
     recordsSkippedExisting,
     emailsSent,
     emailFailures,
+    spousesLinked,
+    spouseLinkErrors,
   };
 }

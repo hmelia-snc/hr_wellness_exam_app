@@ -32,7 +32,7 @@ describe("GET /dashboard/employees", () => {
 
     const res = await agent.get("/dashboard/employees");
     expect(res.status).toBe(200);
-    expect(res.text).toContain("Add an employee");
+    expect(res.text).toContain("Add a record");
     expect(res.text).toContain("Upload CSV");
     expect(res.text).toContain("Existing Person");
   });
@@ -73,7 +73,7 @@ describe("GET /dashboard/employees/csv-template", () => {
     expect(res.status).toBe(200);
     expect(res.headers["content-disposition"]).toMatch(/attachment/);
     expect(res.headers["content-disposition"]).toMatch(/employee-roster-template\.csv/);
-    expect(res.text.split("\n")[0]).toBe("full_name,email,employee_id_external,needs_spouse_form");
+    expect(res.text.split("\n")[0]).toBe("record_type,full_name,email,employee_id_external,linked_employee_email");
   });
 });
 
@@ -136,6 +136,51 @@ describe("POST /dashboard/employees (add one)", () => {
     const page = await agent.get("/dashboard/employees?added=added_email_failed");
     expect(page.text).toMatch(/email failed to send/i);
   });
+
+  it("adds a spouse record linked to an existing employee, with no email required", async () => {
+    const prisma = createFakePrisma();
+    const emailSender = createFakeEmailSender();
+    const app = createApp(prisma as any, createFakeBlobStorage(), emailSender);
+    const agent = await signedInAgent(app);
+
+    const employee = await prisma.employee.upsert({
+      where: { email: "primary@example.com" },
+      create: { email: "primary@example.com", fullName: "Primary Person", active: true },
+      update: {},
+    });
+
+    const res = await agent
+      .post("/dashboard/employees")
+      .type("form")
+      .send({ recordType: "spouse", fullName: "Spouse Person", linkedEmployeeId: employee.id, cycleYear: "2026" });
+
+    expect(res.status).toBe(303);
+    expect(res.headers.location).toBe("/dashboard/employees?added=added");
+
+    const spouse = prisma._state.employees.find((e: any) => e.recordType === "spouse");
+    expect(spouse).toBeTruthy();
+    expect(spouse.linkedEmployeeId).toBe(employee.id);
+    expect(spouse.email).toBeFalsy();
+    // No email/link ever goes out for a spouse row.
+    expect(emailSender.sent).toHaveLength(0);
+
+    const page = await agent.get("/dashboard/employees");
+    expect(page.text).toContain("Spouse Person");
+    expect(page.text).toContain("Spouse of Primary Person");
+  });
+
+  it("rejects adding a spouse without selecting which employee it belongs to", async () => {
+    const prisma = createFakePrisma();
+    const app = createApp(prisma as any, createFakeBlobStorage(), createFakeEmailSender());
+    const agent = await signedInAgent(app);
+
+    const res = await agent
+      .post("/dashboard/employees")
+      .type("form")
+      .send({ recordType: "spouse", fullName: "Spouse Person", cycleYear: "2026" });
+
+    expect(res.status).toBe(400);
+  });
 });
 
 describe("POST /dashboard/employees/import (CSV)", () => {
@@ -155,6 +200,50 @@ describe("POST /dashboard/employees/import (CSV)", () => {
     expect(res.text).toMatch(/2 created and emailed/);
     expect(emailSender.sent).toHaveLength(2);
     expect(prisma._state.physicalRecords).toHaveLength(2);
+  });
+
+  it("links a spouse row to its employee via linked_employee_email", async () => {
+    const prisma = createFakePrisma();
+    const emailSender = createFakeEmailSender();
+    const app = createApp(prisma as any, createFakeBlobStorage(), emailSender);
+    const agent = await signedInAgent(app);
+
+    const csv =
+      "record_type,full_name,email,linked_employee_email\n" +
+      "employee,Jane Doe,jane.doe@example.com,\n" +
+      "spouse,John Doe,,jane.doe@example.com\n";
+    const res = await agent
+      .post("/dashboard/employees/import")
+      .field("cycleYear", "2026")
+      .attach("csv", Buffer.from(csv), { filename: "employees.csv", contentType: "text/csv" });
+
+    expect(res.status).toBe(200);
+    expect(res.text).toMatch(/1 spouse\(s\) linked/);
+
+    const jane = prisma._state.employeesByEmail.get("jane.doe@example.com");
+    const spouse = prisma._state.employees.find((e: any) => e.recordType === "spouse");
+    expect(spouse.fullName).toBe("John Doe");
+    expect(spouse.linkedEmployeeId).toBe(jane.id);
+    expect(prisma._state.physicalRecords.filter((r: any) => r.employeeId === spouse.id)).toHaveLength(1);
+    // Only the employee gets emailed a link — the spouse has none of its own.
+    expect(emailSender.sent).toHaveLength(1);
+    expect(emailSender.sent[0].toEmail).toBe("jane.doe@example.com");
+  });
+
+  it("reports a spouse row whose linked_employee_email doesn't match any employee", async () => {
+    const prisma = createFakePrisma();
+    const app = createApp(prisma as any, createFakeBlobStorage(), createFakeEmailSender());
+    const agent = await signedInAgent(app);
+
+    const csv = "record_type,full_name,linked_employee_email\nspouse,John Doe,nobody@example.com\n";
+    const res = await agent
+      .post("/dashboard/employees/import")
+      .field("cycleYear", "2026")
+      .attach("csv", Buffer.from(csv), { filename: "employees.csv", contentType: "text/csv" });
+
+    expect(res.status).toBe(200);
+    expect(res.text).toMatch(/Spouse rows not linked/);
+    expect(res.text).toMatch(/no employee found with email/);
   });
 });
 
@@ -241,6 +330,36 @@ describe("POST /dashboard/employees/:id/delete", () => {
 
     const page = await agent.get("/dashboard/employees?deleted=1");
     expect(page.text).toContain("Employee deleted.");
+  });
+
+  it("also purges a linked spouse row when deleting the primary employee", async () => {
+    const prisma = createFakePrisma();
+    const employee = await prisma.employee.upsert({
+      where: { email: "primary2@example.com" },
+      create: { email: "primary2@example.com", fullName: "Primary Two", active: true },
+      update: {},
+    });
+    const spouse = await prisma.employee.create({
+      data: { fullName: "Linked Spouse", recordType: "spouse", linkedEmployeeId: employee.id, active: true },
+    });
+    prisma._state.physicalRecords.push({
+      id: "spouse-rec-1",
+      employeeId: spouse.id,
+      cycleYear: 2026,
+      tokenHash: "hash-spouse",
+      tokenExpiresAt: new Date(),
+      status: "sent",
+      createdAt: new Date(),
+    });
+    const app = createApp(prisma as any, createFakeBlobStorage(), createFakeEmailSender());
+    const agent = await signedInAgent(app);
+
+    const res = await agent.post(`/dashboard/employees/${employee.id}/delete`);
+    expect(res.status).toBe(303);
+
+    expect(await prisma.employee.findUnique({ where: { id: employee.id } })).toBeNull();
+    expect(await prisma.employee.findUnique({ where: { id: spouse.id } })).toBeNull();
+    expect(prisma._state.physicalRecords.filter((r: any) => r.employeeId === spouse.id)).toHaveLength(0);
   });
 });
 

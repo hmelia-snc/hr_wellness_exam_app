@@ -6,10 +6,20 @@ import type { ImportCycleResult } from "../services/importCycle.js";
 export interface EmployeeRow {
   id: string;
   fullName: string;
-  email: string;
+  // Nullable: a spouse row commonly has none — it's never emailed anything
+  // independently.
+  email: string | null;
   employeeIdExternal: string | null;
   active: boolean;
+  // Deprecated (see Employee.needsSpouseForm in the schema) — still shown
+  // for any employee row that still relies on it, alongside the newer
+  // recordType/linkedEmployeeName-based spouse tracking below.
   needsSpouseForm: boolean;
+  recordType: "employee" | "spouse";
+  // Set only for a recordType "spouse" row: the primary employee's name.
+  linkedEmployeeName: string | null;
+  // Set only for a recordType "employee" row that has a linked spouse row.
+  spouseName: string | null;
 }
 
 export type AddResult = "added" | "exists" | "added_email_failed";
@@ -18,6 +28,9 @@ export interface EmployeesPageProps {
   hrUser: HrUser;
   defaultCycleYear: number;
   employees: EmployeeRow[];
+  // Active employee-type rows, for the "associate with employee" selector
+  // shown when adding a spouse.
+  employeeOptions: { id: string; fullName: string }[];
   addResult?: AddResult;
   importResult?: ImportCycleResult;
   deleted?: boolean;
@@ -31,6 +44,9 @@ const EXTRA_STYLES = `
   .status-badge { display: inline-block; padding: 0.15rem 0.6rem; border-radius: 999px; font-size: 0.8rem; font-weight: 500; }
   .status-active { background: #d9f2d9; color: #1e6b1e; }
   .status-inactive { background: #eaeaea; color: #555; }
+  .status-employee { background: #eaeaea; color: #444; }
+  .status-spouse { background: ${BRAND.redTint10}; color: ${BRAND.darkRed}; }
+  .linked-note { font-size: 0.75rem; color: #666; margin-top: 0.15rem; }
   .spouse-toggle {
     display: inline-block;
     padding: 0.15rem 0.6rem;
@@ -93,6 +109,8 @@ const EXTRA_STYLES = `
   @media (prefers-color-scheme: dark) {
     th, td { border-bottom-color: #3a3836; }
     .status-inactive { background: #333230; color: #ccc; }
+    .status-employee { background: #333230; color: #ccc; }
+    .linked-note { color: #999; }
     .session-line { color: #aaa; }
     .card { border-color: #3a3836; }
     .inline-fields input { background: #232120; color: #ededed; border-color: #45423f; }
@@ -110,13 +128,20 @@ function importResultSummary(result: ImportCycleResult): string {
         .map((f) => `${escapeHtml(f.email)}: ${escapeHtml(f.error)}`)
         .join("<br>")}</p>`
     : "";
+  const spouseLinkErrors = result.spouseLinkErrors.length
+    ? `<p class="row-errors">Spouse rows not linked:<br>${result.spouseLinkErrors
+        .map((e) => escapeHtml(e.message))
+        .join("<br>")}</p>`
+    : "";
   return `
 <div class="notice-success">
   Imported ${result.employeesSeen} row(s): ${result.recordsCreated} created and emailed,
-  ${result.recordsSkippedExisting} already had a record for this cycle, ${result.emailsSent} email(s) sent.
+  ${result.recordsSkippedExisting} already had a record for this cycle, ${result.emailsSent} email(s) sent,
+  ${result.spousesLinked} spouse(s) linked.
 </div>
 ${rowErrors}
 ${emailFailures}
+${spouseLinkErrors}
 `;
 }
 
@@ -143,16 +168,27 @@ export function renderEmployeesPage(props: EmployeesPageProps): string {
       const spouseToggleTitle = e.needsSpouseForm ? "Click to remove the spouse form requirement" : "Click to add a spouse form requirement";
       const confirmMessage = `Permanently delete ${e.fullName}? This cannot be undone.`;
       const confirmAttr = escapeHtml(JSON.stringify(confirmMessage));
+      const nameCell =
+        e.recordType === "spouse"
+          ? `${escapeHtml(e.fullName)}<div class="linked-note">↳ Spouse of ${escapeHtml(e.linkedEmployeeName ?? "—")}</div>`
+          : escapeHtml(e.fullName);
+      // The legacy Yes/No toggle only applies to an employee row (nothing
+      // for a spouse row to toggle); a linked spouse row created the newer
+      // way shows its name here instead.
+      const spouseFormCell =
+        e.recordType === "spouse"
+          ? "—"
+          : `<button type="submit" formaction="/dashboard/employees/${encodeURIComponent(e.id)}/toggle-spouse-form" formmethod="post" class="spouse-toggle spouse-toggle-${e.needsSpouseForm ? "yes" : "no"}" title="${escapeHtml(spouseToggleTitle)}">${e.needsSpouseForm ? "Yes" : "No"}</button>
+        ${e.spouseName ? `<div class="linked-note">Linked spouse: ${escapeHtml(e.spouseName)}</div>` : ""}`;
       return `
     <tr>
       <td><input type="checkbox" name="ids" value="${escapeHtml(e.id)}" aria-label="Select ${escapeHtml(e.fullName)}" /></td>
-      <td>${escapeHtml(e.fullName)}</td>
-      <td>${escapeHtml(e.email)}</td>
+      <td>${nameCell}</td>
+      <td>${e.email ? escapeHtml(e.email) : "—"}</td>
       <td>${e.employeeIdExternal ? escapeHtml(e.employeeIdExternal) : "—"}</td>
+      <td><span class="status-badge status-${e.recordType}">${e.recordType === "spouse" ? "Spouse" : "Employee"}</span></td>
       <td><span class="status-badge status-${e.active ? "active" : "inactive"}">${e.active ? "active" : "inactive"}</span></td>
-      <td>
-        <button type="submit" formaction="/dashboard/employees/${encodeURIComponent(e.id)}/toggle-spouse-form" formmethod="post" class="spouse-toggle spouse-toggle-${e.needsSpouseForm ? "yes" : "no"}" title="${escapeHtml(spouseToggleTitle)}">${e.needsSpouseForm ? "Yes" : "No"}</button>
-      </td>
+      <td>${spouseFormCell}</td>
       <td class="actions-cell">
         <button type="submit" formaction="/dashboard/employees/${encodeURIComponent(e.id)}/${toggleAction}" formmethod="post" class="small-button">${toggleLabel}</button>
         <button type="submit" formaction="/dashboard/employees/${encodeURIComponent(e.id)}/delete" formmethod="post" class="delete-button" onclick="return confirm(${confirmAttr})">Delete</button>
@@ -174,14 +210,27 @@ ${deletedNotice}
 ${bulkDeletedNotice}
 
 <div class="card">
-  <h2>Add an employee</h2>
+  <h2>Add a record</h2>
   <form method="post" action="/dashboard/employees">
     <div class="inline-fields">
+      <div>
+        <label for="recordType">Record type</label>
+        <select id="recordType" name="recordType" onchange="toggleRecordTypeFields()">
+          <option value="employee">Employee</option>
+          <option value="spouse">Spouse</option>
+        </select>
+      </div>
       <div><label for="fullName">Full name</label><input type="text" id="fullName" name="fullName" required /></div>
-      <div><label for="email">Email</label><input type="email" id="email" name="email" required /></div>
+      <div id="email-field"><label for="email">Email</label><input type="email" id="email" name="email" required /></div>
+      <div id="linked-employee-field" hidden>
+        <label for="linkedEmployeeId">Associate with employee</label>
+        <select id="linkedEmployeeId" name="linkedEmployeeId">
+          <option value="">Select an employee…</option>
+          ${props.employeeOptions.map((o) => `<option value="${escapeHtml(o.id)}">${escapeHtml(o.fullName)}</option>`).join("")}
+        </select>
+      </div>
       <div><label for="employeeIdExternal">Employee ID (optional)</label><input type="text" id="employeeIdExternal" name="employeeIdExternal" /></div>
       <div><label for="cycleYear">Cycle year</label><input type="number" id="cycleYear" name="cycleYear" value="${props.defaultCycleYear}" required /></div>
-      <div class="checkbox-field"><input type="checkbox" id="needsSpouseForm" name="needsSpouseForm" value="1" /><label for="needsSpouseForm">Spouse also needs to complete a form</label></div>
       <div><button type="submit">Add</button></div>
     </div>
   </form>
@@ -209,15 +258,22 @@ ${bulkDeletedNotice}
     <thead>
       <tr>
         <th><input type="checkbox" id="select-all" onclick="toggleAllRows(this)" aria-label="Select all" /></th>
-        <th>Name</th><th>Email</th><th>External ID</th><th>Status</th><th>Spouse Form</th><th></th>
+        <th>Name</th><th>Email</th><th>External ID</th><th>Type</th><th>Status</th><th>Spouse Form</th><th></th>
       </tr>
     </thead>
-    <tbody>${rows || `<tr><td colspan="7">No employees yet.</td></tr>`}</tbody>
+    <tbody>${rows || `<tr><td colspan="8">No records yet.</td></tr>`}</tbody>
   </table>
   </div>
 </form>
 
 <script>
+  function toggleRecordTypeFields() {
+    var isSpouse = document.getElementById('recordType').value === 'spouse';
+    document.getElementById('email-field').hidden = false;
+    document.getElementById('email').required = !isSpouse;
+    document.getElementById('linked-employee-field').hidden = !isSpouse;
+    document.getElementById('linkedEmployeeId').required = isSpouse;
+  }
   function toggleAllRows(source) {
     var boxes = document.querySelectorAll('#bulk-form input[name="ids"]');
     for (var i = 0; i < boxes.length; i++) boxes[i].checked = source.checked;

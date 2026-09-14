@@ -5,8 +5,16 @@ import type { HrUser } from "../lib/auth.js";
 export interface DashboardRecordRow {
   id: string;
   employeeName: string;
-  employeeEmail: string;
+  // Null for a spouse roster record (no email/link of its own).
+  employeeEmail: string | null;
   employeeActive: boolean;
+  // "employee" (default, includes any legacy needsSpouseForm employee) or
+  // "spouse" — a spouse roster record with its own PhysicalRecord, shown as
+  // its own row using the same status/progress/actions as anyone else.
+  recordType: "employee" | "spouse";
+  // Set only when recordType is "spouse": the primary employee's name, for
+  // the "Spouse of X" annotation under the row's name.
+  linkedEmployeeName: string | null;
   status: string;
   sentAt: Date | null;
   receivedAt: Date | null;
@@ -60,6 +68,7 @@ const EXTRA_STYLES = `
   .status-not_received { background: #eaeaea; color: #888; }
   .spouse-status-row { margin-top: 0.3rem; font-size: 0.75rem; color: #666; }
   .spouse-status-row .status-badge { font-size: 0.72rem; padding: 0.1rem 0.5rem; }
+  .linked-note { font-size: 0.75rem; color: #666; margin-top: 0.15rem; }
   .filters { margin: 1rem 0; }
   .filters a { margin-right: 0.9rem; text-decoration: none; color: ${BRAND.red}; font-weight: 500; }
   .filters a.active { text-decoration: underline; }
@@ -126,6 +135,7 @@ const EXTRA_STYLES = `
     .status-sent { background: #333230; color: #ccc; }
     .status-not_received { background: #333230; color: #999; }
     .spouse-status-row { color: #999; }
+    .linked-note { color: #999; }
     .session-line { color: #aaa; }
     .inactive-note { color: #999; }
     .year-select-form select { background: #232120; color: #ededed; border-color: #45423f; }
@@ -151,12 +161,16 @@ export function renderDashboardPage(props: DashboardPageProps): string {
   const qs = query.toString();
 
   const rows = props.records
-    .map(
-      (r) => `
+    .map((r) => {
+      const actionLabel = r.recordType === "spouse" ? "Spouse" : "Employee";
+      return `
     <tr>
       <td><input type="checkbox" name="ids" value="${escapeHtml(r.id)}" aria-label="Select ${escapeHtml(r.employeeName)}"${r.employeeActive ? "" : ` disabled title="Employee inactive — excluded from bulk actions"`} /></td>
-      <td>${escapeHtml(r.employeeName)}</td>
-      <td>${escapeHtml(r.employeeEmail)}</td>
+      <td>
+        ${escapeHtml(r.employeeName)}
+        ${r.recordType === "spouse" && r.linkedEmployeeName ? `<div class="linked-note">↳ Spouse of ${escapeHtml(r.linkedEmployeeName)}</div>` : ""}
+      </td>
+      <td>${r.employeeEmail ? escapeHtml(r.employeeEmail) : "—"}</td>
       <td>
         <span class="status-badge status-${escapeHtml(r.status)}"${r.verificationResult ? ` title="${escapeHtml(r.verificationResult)}"` : ""}>${escapeHtml(r.status)}</span>
         ${r.rejectionReason ? `<span class="rejection-reason" title="${escapeHtml(r.rejectionReason)}">${escapeHtml(r.rejectionReason)}</span>` : ""}
@@ -177,19 +191,21 @@ export function renderDashboardPage(props: DashboardPageProps): string {
       <td>${formatDate(r.completedAt)}</td>
       <td class="actions-cell">
         ${
-          r.employeeActive
-            ? `<button type="submit" formaction="/dashboard/records/${encodeURIComponent(r.id)}/resend?${qs}" formmethod="post" class="small-button">Resend</button>
+          r.recordType === "spouse"
+            ? `<span class="inactive-note">Submitted via ${escapeHtml(r.linkedEmployeeName ?? "linked employee")}'s link</span>`
+            : r.employeeActive
+              ? `<button type="submit" formaction="/dashboard/records/${encodeURIComponent(r.id)}/resend?${qs}" formmethod="post" class="small-button">Resend</button>
         <button type="submit" formaction="/dashboard/records/${encodeURIComponent(r.id)}/link?${qs}" formmethod="post" class="small-button">Get Link</button>`
-            : `<span class="inactive-note">Employee inactive</span>`
+              : `<span class="inactive-note">Employee inactive</span>`
         }
         ${
           r.employeeActive && r.status === "needs_review"
-            ? `<button type="submit" formaction="/dashboard/records/${encodeURIComponent(r.id)}/approve?${qs}" formmethod="post" class="small-button">Approve Employee</button>`
+            ? `<button type="submit" formaction="/dashboard/records/${encodeURIComponent(r.id)}/approve?${qs}" formmethod="post" class="small-button">Approve ${actionLabel}</button>`
             : ""
         }
         ${
           r.employeeActive && r.status !== "rejected" && r.status !== "completed"
-            ? `<button type="button" class="small-button" onclick="openRejectModal(${escapeHtml(JSON.stringify([r.id]))}, ${escapeHtml(JSON.stringify(r.employeeName))}, 'employee')">Reject Employee</button>`
+            ? `<button type="button" class="small-button" onclick="openRejectModal(${escapeHtml(JSON.stringify([r.id]))}, ${escapeHtml(JSON.stringify(r.employeeName))}, 'employee')">Reject ${actionLabel}</button>`
             : ""
         }
         ${
@@ -203,8 +219,8 @@ export function renderDashboardPage(props: DashboardPageProps): string {
             : ""
         }
       </td>
-    </tr>`
-    )
+    </tr>`;
+    })
     .join("");
 
   const filterLink = (label: string, status?: string) => {

@@ -4,16 +4,26 @@ import type { PrismaClient } from "@prisma/client";
 import { requireHrAuth } from "../lib/auth.js";
 import type { EmailSender } from "../lib/email/types.js";
 import type { BlobStorage } from "../lib/blobStorage.js";
-import { upsertEmployeeAndSendLink, deleteEmployee } from "../services/employeeActions.js";
+import { upsertEmployeeAndSendLink, upsertSpouseRecord, deleteEmployee } from "../services/employeeActions.js";
 import { importCycle } from "../services/importCycle.js";
-import { renderEmployeesPage } from "../views/employeesPage.js";
+import { renderEmployeesPage, type EmployeeRow } from "../views/employeesPage.js";
 import { toIdArray } from "../lib/requestArrays.js";
 
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 5 * 1024 * 1024 } });
 
-function toEmployeeRows(
-  employees: { id: string; fullName: string; email: string; employeeIdExternal: string | null; active: boolean; needsSpouseForm: boolean }[]
-) {
+type RosterRow = {
+  id: string;
+  fullName: string;
+  email: string | null;
+  employeeIdExternal: string | null;
+  active: boolean;
+  needsSpouseForm: boolean;
+  recordType: string;
+  linkedEmployee: { fullName: string } | null;
+  spouseRecords: { id: string; fullName: string }[];
+};
+
+function toEmployeeRows(employees: RosterRow[]): EmployeeRow[] {
   return employees.map((e) => ({
     id: e.id,
     fullName: e.fullName,
@@ -21,7 +31,20 @@ function toEmployeeRows(
     employeeIdExternal: e.employeeIdExternal,
     active: e.active,
     needsSpouseForm: e.needsSpouseForm,
+    recordType: e.recordType === "spouse" ? "spouse" : "employee",
+    linkedEmployeeName: e.linkedEmployee?.fullName ?? null,
+    spouseName: e.spouseRecords[0]?.fullName ?? null,
   }));
+}
+
+/** Options for the "associate with employee" selector when adding a spouse. */
+async function activeEmployeeOptions(prisma: PrismaClient): Promise<{ id: string; fullName: string }[]> {
+  const employees = await prisma.employee.findMany({
+    where: { recordType: "employee", active: true },
+    select: { id: true, fullName: true },
+    orderBy: { fullName: "asc" },
+  });
+  return employees;
 }
 
 export function createEmployeesRouter(prisma: PrismaClient, emailSender: EmailSender, blobStorage: BlobStorage): Router {
@@ -29,7 +52,10 @@ export function createEmployeesRouter(prisma: PrismaClient, emailSender: EmailSe
 
   router.get("/", requireHrAuth, async (req: Request, res: Response, next: NextFunction) => {
     try {
-      const employees = await prisma.employee.findMany({ orderBy: { fullName: "asc" } });
+      const employees = await prisma.employee.findMany({
+        orderBy: { fullName: "asc" },
+        include: { linkedEmployee: { select: { fullName: true } }, spouseRecords: { select: { id: true, fullName: true } } },
+      });
       const addResult =
         req.query.added === "added" || req.query.added === "exists" || req.query.added === "added_email_failed"
           ? req.query.added
@@ -39,6 +65,7 @@ export function createEmployeesRouter(prisma: PrismaClient, emailSender: EmailSe
           hrUser: req.session.hrUser!,
           defaultCycleYear: new Date().getFullYear(),
           employees: toEmployeeRows(employees),
+          employeeOptions: await activeEmployeeOptions(prisma),
           addResult,
           deleted: req.query.deleted === "1",
           bulkDeleted: typeof req.query.bulkDeleted === "string" ? Number(req.query.bulkDeleted) || undefined : undefined,
@@ -51,17 +78,39 @@ export function createEmployeesRouter(prisma: PrismaClient, emailSender: EmailSe
 
   router.get("/csv-template", requireHrAuth, (_req: Request, res: Response) => {
     const template =
-      "full_name,email,employee_id_external,needs_spouse_form\n" +
-      "Jane Doe,jane.doe@example.com,E12345,yes\n" +
-      "John Smith,john.smith@example.com,E12346,no\n";
+      "record_type,full_name,email,employee_id_external,linked_employee_email\n" +
+      "employee,Jane Doe,jane.doe@example.com,E12345,\n" +
+      "spouse,John Doe,,,jane.doe@example.com\n" +
+      "employee,John Smith,john.smith@example.com,E12346,\n";
     res.type("text/csv").attachment("employee-roster-template.csv").send(template);
   });
 
   router.post("/", requireHrAuth, async (req: Request, res: Response, next: NextFunction) => {
     try {
-      const { fullName, email, employeeIdExternal, cycleYear, needsSpouseForm } = req.body ?? {};
-      if (!fullName || !email || !cycleYear) {
-        res.status(400).send("fullName, email, and cycleYear are required.");
+      const { recordType, fullName, email, employeeIdExternal, cycleYear, linkedEmployeeId } = req.body ?? {};
+      if (!fullName || !cycleYear) {
+        res.status(400).send("fullName and cycleYear are required.");
+        return;
+      }
+
+      if (recordType === "spouse") {
+        if (!linkedEmployeeId) {
+          res.status(400).send("Select which employee this spouse belongs to.");
+          return;
+        }
+        await upsertSpouseRecord(prisma, {
+          fullName,
+          email: email || undefined,
+          employeeIdExternal: employeeIdExternal || undefined,
+          linkedEmployeeId,
+          cycleYear: Number(cycleYear),
+        });
+        res.redirect(303, "/dashboard/employees?added=added");
+        return;
+      }
+
+      if (!email) {
+        res.status(400).send("email is required for an employee record.");
         return;
       }
       const result = await upsertEmployeeAndSendLink(prisma, emailSender, {
@@ -69,7 +118,6 @@ export function createEmployeesRouter(prisma: PrismaClient, emailSender: EmailSe
         email,
         employeeIdExternal: employeeIdExternal || undefined,
         cycleYear: Number(cycleYear),
-        needsSpouseForm: Boolean(needsSpouseForm),
       });
       const added = !result.recordCreated ? "exists" : result.emailSent ? "added" : "added_email_failed";
       res.redirect(303, `/dashboard/employees?added=${added}`);
@@ -96,12 +144,16 @@ export function createEmployeesRouter(prisma: PrismaClient, emailSender: EmailSe
         uploadedBy: req.session.hrUser!.email,
       });
 
-      const employees = await prisma.employee.findMany({ orderBy: { fullName: "asc" } });
+      const employees = await prisma.employee.findMany({
+        orderBy: { fullName: "asc" },
+        include: { linkedEmployee: { select: { fullName: true } }, spouseRecords: { select: { id: true, fullName: true } } },
+      });
       res.send(
         renderEmployeesPage({
           hrUser: req.session.hrUser!,
           defaultCycleYear: cycleYear,
           employees: toEmployeeRows(employees),
+          employeeOptions: await activeEmployeeOptions(prisma),
           importResult: result,
         })
       );

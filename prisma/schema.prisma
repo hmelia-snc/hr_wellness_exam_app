@@ -13,11 +13,39 @@ datasource db {
 model Employee {
   id                  String   @id @default(uuid())
   fullName            String
-  email               String   @unique
+  // Nullable so a spouse row (see recordType below) can be added without an
+  // email of its own — the spouse never gets independent link/email
+  // delivery, so there's nothing to send one to. Unlike Postgres, SQL
+  // Server's default unique constraint only allows ONE NULL, so this column
+  // is backed by a *filtered* unique index instead (see the
+  // unique_linked_employee_id migration) — that's what actually lets
+  // multiple email-less spouse rows coexist alongside real, unique employee
+  // emails, not this @unique attribute on its own.
+  email               String?  @unique
   employeeIdExternal  String?
   active              Boolean  @default(true)
+  // Deprecated in favor of recordType/linkedEmployeeId below (an employee
+  // that needs a spouse form now gets an actual linked spouse roster row
+  // instead of this boolean) but left in place, still driving any existing
+  // record created under the old model — see PhysicalRecord.spouse* fields.
   needsSpouseForm     Boolean  @default(false)
   createdAt           DateTime @default(now())
+
+  // "employee" (default) or "spouse". A spouse is now its own roster line —
+  // its own dashboard row, its own PhysicalRecord per cycle, reviewed with
+  // the same Approve/Reject actions as anyone else — rather than the
+  // spouse's upload/status being extra fields bolted onto the employee's
+  // own PhysicalRecord (the older model above). Still submitted through the
+  // employee's existing upload link, though: no separate email/login for
+  // the spouse, just its own tracking record underneath.
+  recordType          String     @default("employee")
+  // Set only on a recordType="spouse" row: which employee it belongs to.
+  // @unique caps it at one spouse row per employee — multiple NULLs (every
+  // ordinary employee row) are still fine, same nullable-unique reasoning
+  // as email above.
+  linkedEmployeeId    String?    @unique
+  linkedEmployee      Employee?  @relation("EmployeeSpouse", fields: [linkedEmployeeId], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  spouseRecords       Employee[] @relation("EmployeeSpouse")
 
   physicalRecords PhysicalRecord[]
 

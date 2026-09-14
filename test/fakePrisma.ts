@@ -1,51 +1,116 @@
 import { randomUUID } from "node:crypto";
 
 /**
- * Minimal in-memory stand-in for the subset of PrismaClient that
- * importCycle() touches, so its idempotency/orchestration logic can be unit
- * tested without a live SQL Server instance.
+ * Minimal in-memory stand-in for the subset of PrismaClient that the
+ * services/routes touch, so their orchestration logic can be unit tested
+ * without a live SQL Server instance.
+ *
+ * Employees are stored in a plain array (not keyed by email) since a spouse
+ * roster record (recordType "spouse") commonly has no email at all.
  */
 export function createFakePrisma() {
-  const employeesByEmail = new Map<string, any>();
+  const employees: any[] = [];
   const physicalRecords: any[] = [];
   const uploadBatches: any[] = [];
   const fileAccessLogs: any[] = [];
 
-  return {
+  function findEmployee(where: any): any {
+    if (where.id !== undefined) return employees.find((e) => e.id === where.id) ?? null;
+    if (where.email !== undefined) return employees.find((e) => e.email === where.email) ?? null;
+    if (where.linkedEmployeeId !== undefined) return employees.find((e) => e.linkedEmployeeId === where.linkedEmployeeId) ?? null;
+    return null;
+  }
+
+  const api: any = {
     employee: {
       async upsert({ where, create, update }: any) {
-        const existing = employeesByEmail.get(where.email);
+        const existing = findEmployee(where);
         if (existing) {
           Object.assign(existing, update);
           return existing;
         }
-        const created = { id: randomUUID(), email: where.email, ...create };
-        employeesByEmail.set(where.email, created);
+        const created = {
+          id: randomUUID(),
+          active: true,
+          needsSpouseForm: false,
+          recordType: "employee",
+          linkedEmployeeId: null,
+          email: where.email ?? null,
+          ...create,
+        };
+        employees.push(created);
+        return created;
+      },
+      async create({ data }: any) {
+        const created = {
+          id: randomUUID(),
+          active: true,
+          needsSpouseForm: false,
+          recordType: "employee",
+          linkedEmployeeId: null,
+          email: null,
+          ...data,
+        };
+        employees.push(created);
         return created;
       },
       async findUnique({ where }: any) {
-        if (where.id) {
-          return [...employeesByEmail.values()].find((e) => e.id === where.id) ?? null;
-        }
-        if (where.email) {
-          return employeesByEmail.get(where.email) ?? null;
+        if (where.id !== undefined || where.email !== undefined || where.linkedEmployeeId !== undefined) {
+          return findEmployee(where);
         }
         throw new Error(`fakePrisma.employee.findUnique: unsupported where clause ${JSON.stringify(where)}`);
       },
+      async findFirst({ where = {} }: any = {}) {
+        return (
+          employees.find((e) => {
+            if (where.recordType !== undefined && e.recordType !== where.recordType) return false;
+            if (where.linkedEmployeeId !== undefined && e.linkedEmployeeId !== where.linkedEmployeeId) return false;
+            if (where.active !== undefined && e.active !== where.active) return false;
+            if (where.id !== undefined && e.id !== where.id) return false;
+            return true;
+          }) ?? null
+        );
+      },
       async update({ where, data }: any) {
-        const employee = [...employeesByEmail.values()].find((e) => e.id === where.id);
-        if (!employee) throw new Error(`fakePrisma.employee.update: no employee with id ${where.id}`);
+        const employee = findEmployee(where);
+        if (!employee) throw new Error(`fakePrisma.employee.update: no employee matching ${JSON.stringify(where)}`);
         Object.assign(employee, data);
         return employee;
       },
-      async findMany() {
-        return [...employeesByEmail.values()];
+      async findMany({ where = {}, include, select, orderBy }: any = {}) {
+        let results = employees.filter((e) => {
+          if (where.recordType !== undefined && e.recordType !== where.recordType) return false;
+          if (where.active !== undefined && e.active !== where.active) return false;
+          return true;
+        });
+        if (orderBy?.fullName === "asc") {
+          results = [...results].sort((a, b) => a.fullName.localeCompare(b.fullName));
+        } else if (orderBy?.fullName === "desc") {
+          results = [...results].sort((a, b) => b.fullName.localeCompare(a.fullName));
+        }
+        if (include?.linkedEmployee) {
+          results = results.map((e) => ({
+            ...e,
+            linkedEmployee: e.linkedEmployeeId ? (employees.find((x) => x.id === e.linkedEmployeeId) ?? null) : null,
+          }));
+        }
+        if (include?.spouseRecords) {
+          results = results.map((e) => ({
+            ...e,
+            spouseRecords: employees.filter((x) => x.linkedEmployeeId === e.id),
+          }));
+        }
+        if (select) {
+          const fields = Object.keys(select).filter((key) => select[key]);
+          results = results.map((e) => Object.fromEntries(fields.map((field) => [field, e[field]])));
+        }
+        return results;
       },
       async delete({ where }: any) {
-        const employee = [...employeesByEmail.entries()].find(([, e]) => e.id === where.id);
-        if (!employee) throw new Error(`fakePrisma.employee.delete: no employee with id ${where.id}`);
-        employeesByEmail.delete(employee[0]);
-        return employee[1];
+        const idx = employees.findIndex((e) => e.id === where.id);
+        if (idx === -1) throw new Error(`fakePrisma.employee.delete: no employee with id ${where.id}`);
+        const [removed] = employees.splice(idx, 1);
+        return removed;
       },
     },
     physicalRecord: {
@@ -94,10 +159,15 @@ export function createFakePrisma() {
           });
         }
         if (include?.employee) {
-          results = results.map((r) => ({
-            ...r,
-            employee: [...employeesByEmail.values()].find((e) => e.id === r.employeeId) ?? null,
-          }));
+          results = results.map((r) => {
+            const emp = employees.find((e) => e.id === r.employeeId) ?? null;
+            let employee = emp;
+            if (emp && include.employee?.include?.linkedEmployee) {
+              const linked = emp.linkedEmployeeId ? (employees.find((x) => x.id === emp.linkedEmployeeId) ?? null) : null;
+              employee = { ...emp, linkedEmployee: linked };
+            }
+            return { ...r, employee };
+          });
         }
         if (select) {
           const fields = Object.keys(select).filter((key) => select[key]);
@@ -128,8 +198,21 @@ export function createFakePrisma() {
         return log;
       },
     },
-    _state: { employeesByEmail, physicalRecords, uploadBatches, fileAccessLogs },
   };
+
+  Object.defineProperty(api, "_state", {
+    get() {
+      return {
+        employees,
+        employeesByEmail: new Map(employees.filter((e) => e.email).map((e) => [e.email, e])),
+        physicalRecords,
+        uploadBatches,
+        fileAccessLogs,
+      };
+    },
+  });
+
+  return api;
 }
 
 export type FakePrisma = ReturnType<typeof createFakePrisma>;

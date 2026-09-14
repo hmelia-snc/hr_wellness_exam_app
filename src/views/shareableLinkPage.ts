@@ -4,7 +4,9 @@ import { escapeHtml } from "../lib/html.js";
 export interface ShareableLinkPageProps {
   link: string;
   employeeName: string;
-  employeeEmail: string;
+  // Null for a spouse roster record (no email/link of its own is ever sent —
+  // the spouse submits through the primary employee's link instead).
+  employeeEmail: string | null;
   cycleYear: number;
   regenerated: boolean;
   backHref: string;
@@ -22,9 +24,9 @@ export function renderShareableLinkPage(props: ShareableLinkPageProps): string {
   that old link. Share this one instead.
 </p>`
     : `<p class="notice-success">
-  This is ${escapeHtml(props.employeeName)}'s current link for the ${props.cycleYear} cycle —
-  the same one already sent to ${escapeHtml(props.employeeEmail)}. Sharing it again doesn't
-  invalidate anything.
+  This is ${escapeHtml(props.employeeName)}'s current link for the ${props.cycleYear} cycle${
+        props.employeeEmail ? ` — the same one already sent to ${escapeHtml(props.employeeEmail)}` : ""
+      }. Sharing it again doesn't invalidate anything.
 </p>`;
 
   const body = `

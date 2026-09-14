@@ -469,6 +469,93 @@ describe("POST /wellness-exam/:token/upload with a spouse form", () => {
   });
 });
 
+describe("POST /wellness-exam/:token/upload with a linked spouse roster record", () => {
+  async function seedLinkedSpouse(prisma: ReturnType<typeof createFakePrisma>, employeeId: string) {
+    const spouse = await prisma.employee.create({
+      data: { fullName: "Linked Spouse", recordType: "spouse", linkedEmployeeId: employeeId, active: true },
+    });
+    return spouse;
+  }
+
+  it("shows the spouse file input for an employee with a linked spouse row, even without needsSpouseForm", async () => {
+    const prisma = createFakePrisma();
+    const { rawToken, employee } = await seedRecord(prisma);
+    await seedLinkedSpouse(prisma, employee.id);
+    const app = createApp(prisma as any, createFakeBlobStorage(), createFakeEmailSender());
+
+    const res = await request(app).get(`/wellness-exam/${rawToken}`);
+    expect(res.status).toBe(200);
+    expect(res.text).toContain('name="spouseForm"');
+  });
+
+  it("routes the spouse's uploaded file to the spouse's own PhysicalRecord, not the embedded spouse* fields", async () => {
+    const prisma = createFakePrisma();
+    const { rawToken, record, employee } = await seedRecord(prisma);
+    const spouse = await seedLinkedSpouse(prisma, employee.id);
+    const blobStorage = createFakeBlobStorage();
+    const app = createApp(prisma as any, blobStorage, createFakeEmailSender());
+
+    const res = await request(app)
+      .post(`/wellness-exam/${rawToken}/upload`)
+      .attach("spouseForm", Buffer.from("%PDF-1.4 spouse content"), {
+        filename: "spouse.pdf",
+        contentType: "application/pdf",
+      });
+
+    expect(res.status).toBe(303);
+
+    const employeeRecord = prisma._state.physicalRecords.find((r: any) => r.id === record.id);
+    expect(employeeRecord.spouseReceivedAt).toBeFalsy();
+    expect(employeeRecord.spouseStatus).toBeFalsy();
+
+    const spouseRecord = prisma._state.physicalRecords.find((r: any) => r.employeeId === spouse.id);
+    expect(spouseRecord).toBeTruthy();
+    expect(spouseRecord.status).toBe("received");
+    expect(spouseRecord.receivedAt).toBeInstanceOf(Date);
+    expect(spouseRecord.uploadedContentType).toBe("application/pdf");
+  });
+
+  it("still emails the employee (not the spouse, who has none) when the spouse's file arrives", async () => {
+    const prisma = createFakePrisma();
+    const { rawToken, employee } = await seedRecord(prisma);
+    await seedLinkedSpouse(prisma, employee.id);
+    const emailSender = createFakeEmailSender();
+    const app = createApp(prisma as any, createFakeBlobStorage(), emailSender);
+
+    await request(app)
+      .post(`/wellness-exam/${rawToken}/upload`)
+      .attach("spouseForm", Buffer.from("%PDF-1.4 spouse content"), {
+        filename: "spouse.pdf",
+        contentType: "application/pdf",
+      });
+    await new Promise((resolve) => setTimeout(resolve, 20));
+
+    expect(emailSender.confirmationsSent).toHaveLength(1);
+    expect(emailSender.confirmationsSent[0]).toMatchObject({ toEmail: "physical-test@example.com", submitterRole: "spouse" });
+  });
+
+  it("runs OCR verification on the spouse's own upload too, unlike the old embedded-field model", async () => {
+    const prisma = createFakePrisma();
+    const { rawToken, employee } = await seedRecord(prisma);
+    const spouse = await seedLinkedSpouse(prisma, employee.id);
+    const formVerifier = createFakeFormVerifier();
+    const app = createApp(prisma as any, createFakeBlobStorage(), createFakeEmailSender(), formVerifier);
+
+    await request(app)
+      .post(`/wellness-exam/${rawToken}/upload`)
+      .attach("spouseForm", Buffer.from("%PDF-1.4 spouse content"), {
+        filename: "spouse.pdf",
+        contentType: "application/pdf",
+      });
+    await new Promise((resolve) => setTimeout(resolve, 20));
+
+    expect(formVerifier.calls).toHaveLength(1);
+    const spouseRecord = prisma._state.physicalRecords.find((r: any) => r.employeeId === spouse.id);
+    expect(spouseRecord.status).toBe("completed");
+    expect(spouseRecord.verificationResult).toBe("fake verifier: passed");
+  });
+});
+
 describe("GET /wellness-exam/:token/uploaded-file", () => {
   it("404s before any file has been uploaded", async () => {
     const prisma = createFakePrisma();

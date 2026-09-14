@@ -2,10 +2,20 @@ import { parse } from "csv-parse/sync";
 import { z } from "zod";
 
 export interface EmployeeCsvRow {
+  // "employee" (default, when the column is absent — every pre-existing CSV
+  // keeps working unchanged) or "spouse". A spouse row is linked back to an
+  // employee row via linkedEmployeeEmail instead of getting its own upload
+  // link/email.
+  recordType: "employee" | "spouse";
   fullName: string;
-  email: string;
+  // Required for an "employee" row; optional for a "spouse" row, which
+  // commonly has none.
+  email?: string;
   employeeIdExternal?: string;
   needsSpouseForm?: boolean;
+  // Only set (and required) on a "spouse" row: the email of the employee
+  // row it should be linked to.
+  linkedEmployeeEmail?: string;
 }
 
 export interface CsvRowError {
@@ -19,12 +29,14 @@ export interface CsvParseResult {
 }
 
 const rawRowSchema = z.object({
+  record_type: z.string().optional(),
   full_name: z.string().optional(),
   name: z.string().optional(),
   email: z.string().optional(),
   employee_id_external: z.string().optional(),
   employee_id: z.string().optional(),
   needs_spouse_form: z.string().optional(),
+  linked_employee_email: z.string().optional(),
 });
 
 const TRUTHY_VALUES = new Set(["true", "yes", "y", "1", "x"]);
@@ -65,9 +77,60 @@ export function parseEmployeeCsv(csvContent: string): CsvParseResult {
       return;
     }
 
+    const recordTypeRaw = (parsed.data.record_type || "employee").trim().toLowerCase();
+    if (recordTypeRaw !== "employee" && recordTypeRaw !== "spouse") {
+      errors.push({ line, message: `Invalid record_type: "${parsed.data.record_type}" (must be "employee" or "spouse")` });
+      return;
+    }
+    const recordType = recordTypeRaw;
+
     const fullName = (parsed.data.full_name || parsed.data.name)?.trim();
     if (!fullName) {
       errors.push({ line, message: "Missing full_name/name" });
+      return;
+    }
+
+    const employeeIdExternal =
+      (parsed.data.employee_id_external || parsed.data.employee_id)?.trim() || undefined;
+
+    // A spouse row's own email is optional (it never gets independent
+    // link/email delivery), but it must instead name which employee it
+    // belongs to via linked_employee_email.
+    if (recordType === "spouse") {
+      const rawLinkedEmail = parsed.data.linked_employee_email?.trim();
+      if (!rawLinkedEmail) {
+        errors.push({ line, message: "Missing linked_employee_email for a spouse row" });
+        return;
+      }
+      const linkedEmailResult = z.string().trim().toLowerCase().email().safeParse(rawLinkedEmail);
+      if (!linkedEmailResult.success) {
+        errors.push({ line, message: `Invalid linked_employee_email: "${rawLinkedEmail}"` });
+        return;
+      }
+
+      let email: string | undefined;
+      const rawEmail = parsed.data.email?.trim();
+      if (rawEmail) {
+        const emailResult = z.string().trim().toLowerCase().email().safeParse(rawEmail);
+        if (!emailResult.success) {
+          errors.push({ line, message: `Invalid email: "${rawEmail}"` });
+          return;
+        }
+        email = emailResult.data;
+        if (seenEmails.has(email)) {
+          errors.push({ line, message: `Duplicate email in file, skipped: "${email}"` });
+          return;
+        }
+        seenEmails.add(email);
+      }
+
+      rows.push({
+        recordType: "spouse",
+        fullName,
+        email,
+        employeeIdExternal,
+        linkedEmployeeEmail: linkedEmailResult.data,
+      });
       return;
     }
 
@@ -84,11 +147,9 @@ export function parseEmployeeCsv(csvContent: string): CsvParseResult {
     }
     seenEmails.add(email);
 
-    const employeeIdExternal =
-      (parsed.data.employee_id_external || parsed.data.employee_id)?.trim() || undefined;
     const needsSpouseForm = parseNeedsSpouseForm(parsed.data.needs_spouse_form);
 
-    rows.push({ fullName, email, employeeIdExternal, needsSpouseForm });
+    rows.push({ recordType: "employee", fullName, email, employeeIdExternal, needsSpouseForm });
   });
 
   return { rows, errors };
