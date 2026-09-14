@@ -59,7 +59,7 @@ export interface DashboardPageProps {
   records: DashboardRecordRow[];
 }
 
-const STATUSES = ["sent", "received", "needs_review", "rejected", "completed", "waiting_on_spouse"];
+const STATUSES = ["sent", "received", "needs_review", "rejected", "waiting_on_spouse", "completed"];
 
 // Exact wording for each status badge — a plain word-capitalize of the raw
 // value would read fine for most ("needs_review" -> "Needs Review") but
@@ -80,7 +80,13 @@ function statusLabel(status: string): string {
 
 const EXTRA_STYLES = `
   table { width: 100%; border-collapse: collapse; margin-top: 1rem; }
-  th, td { text-align: left; padding: 0.5rem 0.75rem; border-bottom: 1px solid #ddd; }
+  /* vertical-align: top (rather than the table default of middle) keeps every
+     cell in a row flush with the same top edge — without it, a row with
+     extra stacked content (a rejection reason, the spouse-status sub-line, a
+     wrapped button cluster) is taller than its neighbors, and the default
+     middle alignment makes that row's badges/buttons drift toward its own
+     vertical center instead of lining up with the shorter rows around it. */
+  th, td { text-align: left; padding: 0.5rem 0.75rem; border-bottom: 1px solid #ddd; vertical-align: top; }
   th { font-weight: 700; color: ${BRAND.darkRed}; }
   .status-badge { display: inline-block; padding: 0.15rem 0.6rem; border-radius: 999px; font-size: 0.8rem; font-weight: 500; }
   .status-sent { background: #eaeaea; color: #444; }
@@ -123,7 +129,14 @@ const EXTRA_STYLES = `
     white-space: nowrap;
   }
   .small-button:hover { background: ${BRAND.red}; color: #fff; }
-  .actions-cell { display: flex; flex-wrap: nowrap; gap: 0.4rem; white-space: nowrap; }
+  /* wrap (not nowrap): a row's actions cell can hold anywhere from one to
+     five buttons depending on status/model, so forcing them onto a single
+     line either overflows the table horizontally or squeezes every row to
+     the width of its busiest neighbor — which is what actually caused rows
+     to look like they didn't "line up": the actions column's effective
+     width varied row to row instead of every row wrapping within the same
+     column width like the rest of the grid. */
+  .actions-cell { display: flex; flex-wrap: wrap; align-items: center; gap: 0.4rem; }
   .actions-cell form { display: inline; }
   .inactive-note { color: #888; font-size: 0.8rem; font-style: italic; white-space: nowrap; }
   .file-link { display: block; font-size: 0.75rem; color: ${BRAND.red}; text-decoration: none; margin-top: 0.15rem; }
@@ -320,6 +333,7 @@ ${notices.join("\n")}
     <button type="submit" formaction="/dashboard/bulk/resend?${qs}" class="small-button" onclick="return confirmBulk('resend')">Resend Selected</button>
     <button type="button" class="small-button" onclick="openBulkRejectModal()">Reject Selected</button>
   </div>
+  <div style="overflow-x: auto;">
   <table>
     <thead>
       <tr>
@@ -329,6 +343,7 @@ ${notices.join("\n")}
     </thead>
     <tbody>${rows || `<tr><td colspan="10">No records for this cycle${props.statusFilter ? ` with status "${escapeHtml(props.statusFilter)}"` : ""}.</td></tr>`}</tbody>
   </table>
+  </div>
 </form>
 
 <dialog id="reject-dialog">
