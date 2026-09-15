@@ -230,6 +230,41 @@ describe("POST /dashboard/employees/import (CSV)", () => {
     expect(emailSender.sent[0].toEmail).toBe("jane.doe@example.com");
   });
 
+  it("links multiple spouses sharing their employee's email, regardless of row order", async () => {
+    const prisma = createFakePrisma();
+    const emailSender = createFakeEmailSender();
+    const app = createApp(prisma as any, createFakeBlobStorage(), emailSender);
+    const agent = await signedInAgent(app);
+
+    // Mirrors a real reported bug: a spouse commonly shares its employee's
+    // email (a household inbox), and a spouse row may appear before or
+    // after its employee row in the file. Neither should cause a
+    // "Duplicate email" row error or a failed spouse link.
+    const csv =
+      "record_type,full_name,email,employee_id_external\n" +
+      "spouse,Britnie Martin,shared1@example.com,E100\n" +
+      "employee,John Machado,shared1@example.com,E100\n" +
+      "employee,Christy Cunningham,shared2@example.com,E200\n" +
+      "spouse,Kelly Cunningham,shared2@example.com,E200\n";
+    const res = await agent
+      .post("/dashboard/employees/import")
+      .field("cycleYear", "2026")
+      .attach("csv", Buffer.from(csv), { filename: "employees.csv", contentType: "text/csv" });
+
+    expect(res.status).toBe(200);
+    expect(res.text).not.toMatch(/Duplicate email/);
+    expect(res.text).not.toMatch(/Spouse rows not linked/);
+    expect(res.text).toMatch(/2 created and emailed/);
+    expect(res.text).toMatch(/2 spouse\(s\) linked/);
+
+    const john = prisma._state.employees.find((e: any) => e.fullName === "John Machado");
+    const britnie = prisma._state.employees.find((e: any) => e.fullName === "Britnie Martin");
+    const christy = prisma._state.employees.find((e: any) => e.fullName === "Christy Cunningham");
+    const kelly = prisma._state.employees.find((e: any) => e.fullName === "Kelly Cunningham");
+    expect(britnie.linkedEmployeeId).toBe(john.id);
+    expect(kelly.linkedEmployeeId).toBe(christy.id);
+  });
+
   it("reports a spouse row whose employee_id_external doesn't match any employee", async () => {
     const prisma = createFakePrisma();
     const app = createApp(prisma as any, createFakeBlobStorage(), createFakeEmailSender());

@@ -20,7 +20,16 @@ model Employee {
   // is backed by a *filtered* unique index instead (see the
   // unique_linked_employee_id migration) — that's what actually lets
   // multiple email-less spouse rows coexist alongside real, unique employee
-  // emails, not this @unique attribute on its own.
+  // emails, not this @unique attribute on its own. That filter also excludes
+  // recordType="spouse" rows entirely (see the
+  // spouse_email_not_unique migration): a spouse commonly shares its linked
+  // employee's email (a household inbox), which is fine since a spouse never
+  // gets independent link/email delivery — only two "employee" rows sharing
+  // an email is actually a problem. Because of that filter, a plain
+  // `prisma.employee.upsert({ where: { email } })`/`findUnique` is unsafe —
+  // it could match a same-email spouse row instead of the real employee —
+  // so employeeActions.ts looks employees up by `findFirst({ where: { email,
+  // recordType: "employee" } })` instead.
   email               String?  @unique
   employeeIdExternal  String?
   active              Boolean  @default(true)

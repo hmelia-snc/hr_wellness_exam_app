@@ -65,6 +65,8 @@ export function createFakePrisma() {
             if (where.linkedEmployeeId !== undefined && e.linkedEmployeeId !== where.linkedEmployeeId) return false;
             if (where.active !== undefined && e.active !== where.active) return false;
             if (where.id !== undefined && e.id !== where.id) return false;
+            if (where.email !== undefined && e.email !== where.email) return false;
+            if (where.employeeIdExternal !== undefined && e.employeeIdExternal !== where.employeeIdExternal) return false;
             return true;
           }) ?? null
         );

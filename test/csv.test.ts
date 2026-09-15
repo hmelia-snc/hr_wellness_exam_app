@@ -92,6 +92,19 @@ describe("parseEmployeeCsv", () => {
     expect(errors[0].message).toMatch(/Missing employee_id_external/);
   });
 
+  it("allows a spouse to share its linked employee's email (a household inbox), regardless of row order", () => {
+    const csv =
+      "record_type,full_name,email,employee_id_external\n" +
+      "spouse,Britnie Martin,shared@example.com,E100\n" +
+      "employee,John Machado,shared@example.com,E100\n";
+    const { rows, errors } = parseEmployeeCsv(csv);
+    expect(errors).toHaveLength(0);
+    expect(rows).toEqual([
+      { recordType: "spouse", fullName: "Britnie Martin", email: "shared@example.com", employeeIdExternal: "E100" },
+      { recordType: "employee", fullName: "John Machado", email: "shared@example.com", employeeIdExternal: "E100" },
+    ]);
+  });
+
   it("collects an error for an invalid record_type", () => {
     const csv = "record_type,full_name,email\nchild,Jane Doe,jane@example.com\n";
     const { rows, errors } = parseEmployeeCsv(csv);

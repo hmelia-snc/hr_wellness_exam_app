@@ -54,7 +54,11 @@ export function parseEmployeeCsv(csvContent: string): CsvParseResult {
 
   const rows: EmployeeCsvRow[] = [];
   const errors: CsvRowError[] = [];
-  const seenEmails = new Set<string>();
+  // Only employee rows need a unique email (it's the identifier their
+  // upload link is sent to). A spouse commonly shares its employee's email
+  // (a household inbox) — that's expected, not a duplicate, since a spouse
+  // never gets independent link/email delivery of its own.
+  const seenEmployeeEmails = new Set<string>();
 
   records.forEach((record, index) => {
     const line = index + 2; // +1 for 0-index, +1 for the header row
@@ -97,11 +101,6 @@ export function parseEmployeeCsv(csvContent: string): CsvParseResult {
           return;
         }
         email = emailResult.data;
-        if (seenEmails.has(email)) {
-          errors.push({ line, message: `Duplicate email in file, skipped: "${email}"` });
-          return;
-        }
-        seenEmails.add(email);
       }
 
       rows.push({
@@ -122,11 +121,11 @@ export function parseEmployeeCsv(csvContent: string): CsvParseResult {
     }
     const email = emailResult.data;
 
-    if (seenEmails.has(email)) {
+    if (seenEmployeeEmails.has(email)) {
       errors.push({ line, message: `Duplicate email in file, skipped: "${email}"` });
       return;
     }
-    seenEmails.add(email);
+    seenEmployeeEmails.add(email);
 
     rows.push({ recordType: "employee", fullName, email, employeeIdExternal });
   });

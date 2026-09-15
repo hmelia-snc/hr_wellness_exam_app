@@ -31,20 +31,30 @@ export async function upsertEmployeeAndSendLink(
 ): Promise<UpsertEmployeeResult> {
   const env = getEnv();
 
-  const employee = await prisma.employee.upsert({
-    where: { email: input.email },
-    create: {
-      email: input.email,
-      fullName: input.fullName,
-      employeeIdExternal: input.employeeIdExternal,
-      active: true,
-    },
-    update: {
-      fullName: input.fullName,
-      employeeIdExternal: input.employeeIdExternal,
-      active: true,
-    },
+  // Not a plain prisma.employee.upsert({ where: { email } }) — email is only
+  // unique among recordType="employee" rows (a spouse may share its
+  // employee's email), so a lookup keyed on email alone could match a
+  // same-email spouse row instead of the real employee.
+  const existingEmployee = await prisma.employee.findFirst({
+    where: { email: input.email, recordType: "employee" },
   });
+  const employee = existingEmployee
+    ? await prisma.employee.update({
+        where: { id: existingEmployee.id },
+        data: {
+          fullName: input.fullName,
+          employeeIdExternal: input.employeeIdExternal,
+          active: true,
+        },
+      })
+    : await prisma.employee.create({
+        data: {
+          email: input.email,
+          fullName: input.fullName,
+          employeeIdExternal: input.employeeIdExternal,
+          active: true,
+        },
+      });
 
   // If this employee already has a linked spouse roster row (recordType
   // "spouse"), make sure it has a PhysicalRecord for this cycle too — e.g.
