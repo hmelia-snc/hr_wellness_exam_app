@@ -188,7 +188,6 @@ export function renderDashboardPage(props: DashboardPageProps): string {
 
   const rows = props.records
     .map((r) => {
-      const actionLabel = r.recordType === "spouse" ? "Spouse" : "Employee";
       return `
     <tr id="row-${escapeHtml(r.id)}">
       <td><input type="checkbox" name="ids" value="${escapeHtml(r.id)}" aria-label="Select ${escapeHtml(r.employeeName)}"${r.employeeActive ? "" : ` disabled title="Employee inactive — excluded from bulk actions"`} /></td>
@@ -220,12 +219,12 @@ export function renderDashboardPage(props: DashboardPageProps): string {
         }
         ${
           r.employeeActive && r.status === "needs_review"
-            ? `<button type="submit" formaction="/dashboard/records/${encodeURIComponent(r.id)}/approve?${qs}" formmethod="post" class="small-button">Approve ${actionLabel}</button>`
+            ? `<button type="submit" formaction="/dashboard/records/${encodeURIComponent(r.id)}/approve?${qs}" formmethod="post" class="small-button">Approve</button>`
             : ""
         }
         ${
           r.employeeActive && r.status !== "rejected" && r.status !== "completed"
-            ? `<button type="button" class="small-button" onclick="openRejectModal(${escapeHtml(JSON.stringify([r.id]))}, ${escapeHtml(JSON.stringify(r.employeeName))})">Reject ${actionLabel}</button>`
+            ? `<button type="button" class="small-button" onclick="openRejectModal(${escapeHtml(JSON.stringify([r.id]))}, ${escapeHtml(JSON.stringify(r.employeeName))})">Reject</button>`
             : ""
         }
       </td>

@@ -450,11 +450,10 @@ describe("POST /dashboard/records/:id/approve", () => {
     expect(res.text).toContain('title="No handwritten signature detected');
   });
 
-  // Regression: the button used to read plain "Approve"/"Reject" when the
-  // employee had no spouse form, only switching to "Approve Employee" once
-  // a spouse form was also in play — now it's always labeled "Employee" so
-  // it visually stands out from the separate spouse actions regardless.
-  it("always labels employee-side actions 'Approve Employee'/'Reject Employee', even with no spouse form", async () => {
+  // Plain "Approve"/"Reject" — a "Employee"/"Spouse" suffix isn't needed for
+  // disambiguation since a spouse is always its own separate row (with its
+  // own Type badge), not a second action embedded in the same row.
+  it("labels the employee-side actions plain 'Approve'/'Reject'", async () => {
     const prisma = createFakePrisma();
     await seedEmployeeAndRecord(prisma, { status: "needs_review" });
     const app = createApp(prisma as any, createFakeBlobStorage(), createFakeEmailSender());
@@ -462,8 +461,8 @@ describe("POST /dashboard/records/:id/approve", () => {
     await agent.post("/auth/login").type("form").send({ returnTo: "/dashboard" });
 
     const res = await agent.get("/dashboard?year=2026");
-    expect(res.text).toContain(">Approve Employee<");
-    expect(res.text).toContain(">Reject Employee<");
+    expect(res.text).toContain(">Approve<");
+    expect(res.text).toContain(">Reject<");
   });
 
   it("hides the Approve button and does not approve when the employee is inactive, even via a direct POST", async () => {
@@ -738,7 +737,7 @@ describe("Dashboard: linked spouse roster records show as their own row", () => 
     expect(res.text).toContain('<span class="status-badge status-employee">Employee</span>');
   });
 
-  it("labels a linked spouse row's approve/reject actions 'Approve Spouse'/'Reject Spouse'", async () => {
+  it("labels a linked spouse row's approve/reject actions plain 'Approve'/'Reject' too", async () => {
     const prisma = createFakePrisma();
     const { employee } = await seedEmployeeAndRecord(prisma);
     const spouse = await prisma.employee.create({
@@ -758,8 +757,8 @@ describe("Dashboard: linked spouse roster records show as their own row", () => 
     await agent.post("/auth/login").type("form").send({ returnTo: "/dashboard" });
 
     const res = await agent.get("/dashboard?year=2026");
-    expect(res.text).toContain(">Approve Spouse<");
-    expect(res.text).toContain(">Reject Spouse<");
+    expect(res.text).toContain(">Approve<");
+    expect(res.text).toContain(">Reject<");
 
     const approveRes = await agent.post("/dashboard/records/spouse-rec-2/approve");
     expect(approveRes.status).toBe(303);

@@ -222,8 +222,8 @@ ${bulkDeletedNotice}
       <div>
         <label for="recordTypeSearch">Record type</label>
         <div class="combobox">
-          <input type="text" id="recordTypeSearch" autocomplete="off" role="combobox" aria-expanded="false" aria-controls="recordTypeList" />
-          <input type="hidden" id="recordType" name="recordType" value="employee" />
+          <input type="text" id="recordTypeSearch" autocomplete="off" placeholder="Employee or Spouse…" role="combobox" aria-expanded="false" aria-controls="recordTypeList" />
+          <input type="hidden" id="recordType" name="recordType" value="" />
           <ul class="combobox-list" id="recordTypeList" role="listbox" hidden></ul>
         </div>
       </div>
@@ -403,7 +403,7 @@ ${bulkDeletedNotice}
     options: ${JSON.stringify(props.employeeOptions.map((o) => ({ value: o.id, label: o.fullName }))).replace(/</g, "\\u003c")},
   });
 
-  var recordTypeCombo = initCombobox({
+  initCombobox({
     inputId: 'recordTypeSearch',
     hiddenId: 'recordType',
     listId: 'recordTypeList',
@@ -413,7 +413,10 @@ ${bulkDeletedNotice}
     ],
     onChange: toggleRecordTypeFields,
   });
-  recordTypeCombo.setValue('employee');
+  // Left blank rather than defaulting to "Employee" — a blank Record type
+  // still submits and is treated as "employee" server-side (same as an
+  // absent record_type column in a CSV import), but starting blank forces
+  // a deliberate choice instead of an easy-to-miss pre-selection.
   toggleRecordTypeFields();
 
   function toggleRecordTypeFields() {

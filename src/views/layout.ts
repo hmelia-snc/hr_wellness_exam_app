@@ -32,7 +32,11 @@ const BASE_STYLES = `
     padding: 0 1rem;
     box-sizing: border-box;
   }
-  main.wide { max-width: 1180px; }
+  /* 1180px was tight enough that the dashboard's data table (8 columns plus
+     up to 4 action buttons per row) regularly triggered its horizontal
+     scroll fallback even on ordinary desktop widths — widened so the table
+     has room to lay out in full on any reasonably sized screen instead. */
+  main.wide { max-width: 1600px; }
   .brand-header {
     display: flex;
     align-items: center;
