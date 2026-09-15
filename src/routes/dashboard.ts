@@ -5,14 +5,7 @@ import { renderDashboardPage } from "../views/dashboardPage.js";
 import { renderShareableLinkPage } from "../views/shareableLinkPage.js";
 import type { EmailSender } from "../lib/email/types.js";
 import type { BlobStorage } from "../lib/blobStorage.js";
-import {
-  resendLink,
-  getShareableLink,
-  rejectRecord,
-  approveRecord,
-  approveSpouseForm,
-  rejectSpouseForm,
-} from "../services/employeeActions.js";
+import { resendLink, getShareableLink, rejectRecord, approveRecord } from "../services/employeeActions.js";
 import { recordFileAccess } from "../services/fileAccessLog.js";
 import { buildCsv } from "../lib/csv.js";
 import { toIdArray } from "../lib/requestArrays.js";
@@ -49,10 +42,8 @@ function queryNumber(value: unknown): number | undefined {
 interface RecordForStatus {
   employeeId: string;
   status: string;
-  spouseStatus: string | null;
   employee: {
     recordType: string;
-    needsSpouseForm: boolean;
     spouseRecords: { id: string }[];
   };
 }
@@ -60,15 +51,11 @@ interface RecordForStatus {
 /**
  * Derives a display status that overrides a literally-"completed" record to
  * "waiting_on_spouse" when the employee's own form is done but the linked
- * spouse's side isn't yet — under either model:
- *   - New: a linked spouse roster row (recordType "spouse") tracks its own
- *     PhysicalRecord for the same cycle; look up its status by employeeId.
- *   - Old: no linked spouse row, just the needsSpouseForm flag with the
- *     spouse's status embedded on this same record (spouseStatus).
- * Every other status passes through unchanged, and a spouse's own row is
- * never overridden (no "waiting on employee" case is needed by symmetry —
- * only asked for this direction). This is purely a display-layer label:
- * the underlying `status` column, which button eligibility and other logic
+ * spouse's own PhysicalRecord for the same cycle isn't yet. Every other
+ * status passes through unchanged, and a spouse's own row is never
+ * overridden (no "waiting on employee" case is needed by symmetry — only
+ * asked for this direction). This is purely a display-layer label: the
+ * underlying `status` column, which button eligibility and other logic
  * still key off, is untouched.
  */
 function withDisplayStatuses<T extends RecordForStatus>(records: T[]): (T & { displayStatus: string })[] {
@@ -78,11 +65,7 @@ function withDisplayStatuses<T extends RecordForStatus>(records: T[]): (T & { di
     let displayStatus = record.status;
     if (record.status === "completed" && employee.recordType !== "spouse") {
       const linkedSpouseEmployeeId = employee.spouseRecords[0]?.id;
-      if (linkedSpouseEmployeeId) {
-        if (statusByEmployeeId.get(linkedSpouseEmployeeId) !== "completed") {
-          displayStatus = "waiting_on_spouse";
-        }
-      } else if (employee.needsSpouseForm && record.spouseStatus !== "completed") {
+      if (linkedSpouseEmployeeId && statusByEmployeeId.get(linkedSpouseEmployeeId) !== "completed") {
         displayStatus = "waiting_on_spouse";
       }
     }
@@ -163,15 +146,9 @@ export function createDashboardRouter(prisma: PrismaClient, emailSender: EmailSe
             sentAt: record.sentAt,
             receivedAt: record.receivedAt,
             completedAt: record.completedAt,
-            needsSpouseForm: record.employee.needsSpouseForm,
-            spouseReceivedAt: record.spouseReceivedAt,
             verificationResult: record.verificationResult,
             rejectionReason: record.rejectionReason,
-            spouseStatus: record.spouseStatus,
-            spouseVerificationResult: record.spouseVerificationResult,
-            spouseRejectionReason: record.spouseRejectionReason,
             hasUploadedFile: Boolean(record.uploadedBlobPath),
-            hasSpouseFile: Boolean(record.spouseUploadedBlobPath),
           })),
         })
       );
@@ -193,21 +170,7 @@ export function createDashboardRouter(prisma: PrismaClient, emailSender: EmailSe
 
       const formatDate = (date: Date | null) => (date ? date.toISOString().slice(0, 10) : "");
       const csv = buildCsv(
-        [
-          "Employee",
-          "Email",
-          "Record Type",
-          "Status",
-          "Sent",
-          "Received",
-          "Completed",
-          "Needs Spouse Form",
-          "Spouse Received",
-          "Verification Result",
-          "Rejection Reason",
-          "Spouse Status",
-          "Spouse Rejection Reason",
-        ],
+        ["Employee", "Email", "Record Type", "Status", "Sent", "Received", "Completed", "Verification Result", "Rejection Reason"],
         records.map((r) => [
           r.employee.fullName,
           r.employee.email ?? "",
@@ -216,12 +179,8 @@ export function createDashboardRouter(prisma: PrismaClient, emailSender: EmailSe
           formatDate(r.sentAt),
           formatDate(r.receivedAt),
           formatDate(r.completedAt),
-          r.employee.needsSpouseForm ? "yes" : "no",
-          formatDate(r.spouseReceivedAt),
           r.verificationResult ?? "",
           r.rejectionReason ?? "",
-          r.employee.needsSpouseForm ? r.spouseStatus ?? "not received" : "",
-          r.spouseRejectionReason ?? "",
         ])
       );
 
@@ -241,23 +200,6 @@ export function createDashboardRouter(prisma: PrismaClient, emailSender: EmailSe
       const buffer = await blobStorage.downloadForm(record.uploadedBlobPath);
       await recordFileAccess(prisma, record.id, "employee", req.session.hrUser!.email);
       res.setHeader("Content-Type", record.uploadedContentType ?? "application/octet-stream");
-      res.setHeader("Content-Disposition", "inline");
-      res.send(buffer);
-    } catch (err) {
-      next(err);
-    }
-  });
-
-  router.get("/records/:id/spouse-file", requireHrAuth, async (req: Request, res: Response, next: NextFunction) => {
-    try {
-      const record = await prisma.physicalRecord.findUnique({ where: { id: req.params.id } });
-      if (!record?.spouseUploadedBlobPath) {
-        res.status(404).send("No uploaded spouse file for this record.");
-        return;
-      }
-      const buffer = await blobStorage.downloadForm(record.spouseUploadedBlobPath);
-      await recordFileAccess(prisma, record.id, "spouse", req.session.hrUser!.email);
-      res.setHeader("Content-Type", record.spouseUploadedContentType ?? "application/octet-stream");
       res.setHeader("Content-Disposition", "inline");
       res.send(buffer);
     } catch (err) {
@@ -303,37 +245,6 @@ export function createDashboardRouter(prisma: PrismaClient, emailSender: EmailSe
         return;
       }
       const result = await rejectRecord(prisma, emailSender, req.params.id, reason, req.session.hrUser!.email);
-      res.redirect(303, backToDashboardHref(req, result.emailSent ? {} : { rejectEmailFailed: "1" }));
-    } catch (err) {
-      next(err);
-    }
-  });
-
-  router.post("/records/:id/approve-spouse", requireHrAuth, async (req: Request, res: Response, next: NextFunction) => {
-    try {
-      if (!(await isRecordsEmployeeActive(prisma, req.params.id))) {
-        res.redirect(303, backToDashboardHref(req));
-        return;
-      }
-      await approveSpouseForm(prisma, req.params.id, req.session.hrUser!.email);
-      res.redirect(303, backToDashboardHref(req));
-    } catch (err) {
-      next(err);
-    }
-  });
-
-  router.post("/records/:id/reject-spouse", requireHrAuth, async (req: Request, res: Response, next: NextFunction) => {
-    try {
-      if (!(await isRecordsEmployeeActive(prisma, req.params.id))) {
-        res.redirect(303, backToDashboardHref(req));
-        return;
-      }
-      const reason = typeof req.body?.reason === "string" ? req.body.reason.trim() : "";
-      if (!reason) {
-        res.status(400).send("A rejection reason is required.");
-        return;
-      }
-      const result = await rejectSpouseForm(prisma, emailSender, req.params.id, reason, req.session.hrUser!.email);
       res.redirect(303, backToDashboardHref(req, result.emailSent ? {} : { rejectEmailFailed: "1" }));
     } catch (err) {
       next(err);

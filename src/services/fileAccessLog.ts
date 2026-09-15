@@ -1,6 +1,10 @@
 import type { PrismaClient } from "@prisma/client";
 
-export type FileAccessType = "employee" | "spouse";
+// "employee" is the only value ever recorded now — every PhysicalRecord
+// (an employee's own, or a spouse's own linked record) has exactly one
+// uploaded file, so there's no second "spouse" slot on the same record to
+// distinguish anymore.
+export type FileAccessType = "employee";
 
 /**
  * Records who viewed an uploaded form and when, per the spec's audit

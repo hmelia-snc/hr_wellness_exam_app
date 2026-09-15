@@ -259,19 +259,8 @@ describe("POST /wellness-exam/:token/upload", () => {
   });
 });
 
-describe("POST /wellness-exam/:token/upload with a spouse form", () => {
-  it("shows the spouse file input and status line when the employee needs one", async () => {
-    const prisma = createFakePrisma();
-    const { rawToken } = await seedRecord(prisma, {}, { needsSpouseForm: true });
-    const app = createApp(prisma as any, createFakeBlobStorage(), createFakeEmailSender());
-
-    const res = await request(app).get(`/wellness-exam/${rawToken}`);
-    expect(res.status).toBe(200);
-    expect(res.text).toContain('name="spouseForm"');
-    expect(res.text).toMatch(/not yet received/i);
-  });
-
-  it("does not show the spouse file input when the employee doesn't need one", async () => {
+describe("POST /wellness-exam/:token/upload with no spouse on file", () => {
+  it("does not show the spouse file input", async () => {
     const prisma = createFakePrisma();
     const { rawToken } = await seedRecord(prisma);
     const app = createApp(prisma as any, createFakeBlobStorage(), createFakeEmailSender());
@@ -280,82 +269,7 @@ describe("POST /wellness-exam/:token/upload with a spouse form", () => {
     expect(res.text).not.toContain('name="spouseForm"');
   });
 
-  it("accepts the spouse's file alone without touching the employee's own status/receivedAt", async () => {
-    const prisma = createFakePrisma();
-    const { rawToken, record } = await seedRecord(prisma, {}, { needsSpouseForm: true });
-    const blobStorage = createFakeBlobStorage();
-    const app = createApp(prisma as any, blobStorage, createFakeEmailSender());
-
-    const res = await request(app)
-      .post(`/wellness-exam/${rawToken}/upload`)
-      .attach("spouseForm", Buffer.from("%PDF-1.4 spouse content"), {
-        filename: "spouse.pdf",
-        contentType: "application/pdf",
-      });
-
-    expect(res.status).toBe(303);
-    const updated = prisma._state.physicalRecords.find((r: any) => r.id === record.id);
-    expect(updated.status).toBe("sent");
-    expect(updated.receivedAt).toBeUndefined();
-    expect(updated.spouseReceivedAt).toBeInstanceOf(Date);
-    expect(updated.spouseUploadedContentType).toBe("application/pdf");
-    // Regression: the spouse side needs its own "received" status so HR's
-    // dashboard can show it's actually pending review, not just that a file
-    // exists — this was missed on the first pass (upload set
-    // spouseReceivedAt/spouseUploadedBlobPath but never spouseStatus, so the
-    // dashboard kept showing "not received" even after a real upload).
-    expect(updated.spouseStatus).toBe("received");
-    expect(blobStorage.uploads[0].blobPath).toContain("spouse-");
-  });
-
-  it("clears a stale rejection reason on either side when that side is resubmitted", async () => {
-    const prisma = createFakePrisma();
-    const { rawToken, record } = await seedRecord(
-      prisma,
-      { rejectionReason: "Old employee-side reason", spouseRejectionReason: "Old spouse-side reason", spouseStatus: "rejected" },
-      { needsSpouseForm: true }
-    );
-    const blobStorage = createFakeBlobStorage();
-    const app = createApp(prisma as any, blobStorage, createFakeEmailSender());
-
-    const res = await request(app)
-      .post(`/wellness-exam/${rawToken}/upload`)
-      .attach("form", Buffer.from("%PDF-1.4 employee content"), { filename: "mine.pdf", contentType: "application/pdf" })
-      .attach("spouseForm", Buffer.from("%PDF-1.4 spouse content"), {
-        filename: "spouse.pdf",
-        contentType: "application/pdf",
-      });
-
-    expect(res.status).toBe(303);
-    const updated = prisma._state.physicalRecords.find((r: any) => r.id === record.id);
-    expect(updated.rejectionReason).toBeNull();
-    expect(updated.spouseRejectionReason).toBeNull();
-    expect(updated.spouseStatus).toBe("received");
-  });
-
-  it("accepts both files in the same request", async () => {
-    const prisma = createFakePrisma();
-    const { rawToken, record } = await seedRecord(prisma, {}, { needsSpouseForm: true });
-    const blobStorage = createFakeBlobStorage();
-    const app = createApp(prisma as any, blobStorage, createFakeEmailSender());
-
-    const res = await request(app)
-      .post(`/wellness-exam/${rawToken}/upload`)
-      .attach("form", Buffer.from("%PDF-1.4 employee content"), { filename: "mine.pdf", contentType: "application/pdf" })
-      .attach("spouseForm", Buffer.from("%PDF-1.4 spouse content"), {
-        filename: "spouse.pdf",
-        contentType: "application/pdf",
-      });
-
-    expect(res.status).toBe(303);
-    expect(blobStorage.uploads).toHaveLength(2);
-    const updated = prisma._state.physicalRecords.find((r: any) => r.id === record.id);
-    expect(updated.status).toBe("received");
-    expect(updated.receivedAt).toBeInstanceOf(Date);
-    expect(updated.spouseReceivedAt).toBeInstanceOf(Date);
-  });
-
-  it("rejects a spouse file for an employee who doesn't need one", async () => {
+  it("rejects a spouse file", async () => {
     const prisma = createFakePrisma();
     const { rawToken } = await seedRecord(prisma);
     const blobStorage = createFakeBlobStorage();
@@ -371,102 +285,6 @@ describe("POST /wellness-exam/:token/upload with a spouse form", () => {
     expect(res.status).toBe(400);
     expect(blobStorage.uploads).toHaveLength(0);
   });
-
-  it("sends a spouse-worded confirmation email when only the spouse's file is uploaded", async () => {
-    const prisma = createFakePrisma();
-    const { rawToken } = await seedRecord(prisma, {}, { needsSpouseForm: true });
-    const blobStorage = createFakeBlobStorage();
-    const emailSender = createFakeEmailSender();
-    const app = createApp(prisma as any, blobStorage, emailSender);
-
-    const res = await request(app)
-      .post(`/wellness-exam/${rawToken}/upload`)
-      .attach("spouseForm", Buffer.from("%PDF-1.4 spouse content"), {
-        filename: "spouse.pdf",
-        contentType: "application/pdf",
-      });
-
-    expect(res.status).toBe(303);
-    await new Promise((resolve) => setTimeout(resolve, 20));
-    expect(emailSender.confirmationsSent).toHaveLength(1);
-    expect(emailSender.confirmationsSent[0]).toMatchObject({ toEmail: "physical-test@example.com", submitterRole: "spouse" });
-  });
-
-  it("tells the employee their own form is still outstanding when only the spouse's form is submitted", async () => {
-    const prisma = createFakePrisma();
-    const { rawToken } = await seedRecord(prisma, {}, { needsSpouseForm: true });
-    const blobStorage = createFakeBlobStorage();
-    const emailSender = createFakeEmailSender();
-    const app = createApp(prisma as any, blobStorage, emailSender);
-
-    await request(app)
-      .post(`/wellness-exam/${rawToken}/upload`)
-      .attach("spouseForm", Buffer.from("%PDF-1.4 spouse content"), {
-        filename: "spouse.pdf",
-        contentType: "application/pdf",
-      });
-    await new Promise((resolve) => setTimeout(resolve, 20));
-
-    expect(emailSender.confirmationsSent[0].isComplete).toBe(false);
-    expect(emailSender.confirmationsSent[0].link).toContain(`/wellness-exam/${rawToken}`);
-  });
-
-  it("tells the employee the spouse's form is still outstanding when only their own is submitted", async () => {
-    const prisma = createFakePrisma();
-    const { rawToken } = await seedRecord(prisma, {}, { needsSpouseForm: true });
-    const blobStorage = createFakeBlobStorage();
-    const emailSender = createFakeEmailSender();
-    const app = createApp(prisma as any, blobStorage, emailSender);
-
-    await request(app)
-      .post(`/wellness-exam/${rawToken}/upload`)
-      .attach("form", Buffer.from("%PDF-1.4 employee content"), { filename: "mine.pdf", contentType: "application/pdf" });
-    await new Promise((resolve) => setTimeout(resolve, 20));
-
-    expect(emailSender.confirmationsSent).toHaveLength(1);
-    expect(emailSender.confirmationsSent[0]).toMatchObject({ submitterRole: "employee", isComplete: false });
-    expect(emailSender.confirmationsSent[0].link).toContain(`/wellness-exam/${rawToken}`);
-  });
-
-  it("marks the confirmation complete once the spouse's form arrives after the employee's own was already received", async () => {
-    const prisma = createFakePrisma();
-    const { rawToken } = await seedRecord(prisma, { receivedAt: new Date() }, { needsSpouseForm: true });
-    const blobStorage = createFakeBlobStorage();
-    const emailSender = createFakeEmailSender();
-    const app = createApp(prisma as any, blobStorage, emailSender);
-
-    await request(app)
-      .post(`/wellness-exam/${rawToken}/upload`)
-      .attach("spouseForm", Buffer.from("%PDF-1.4 spouse content"), {
-        filename: "spouse.pdf",
-        contentType: "application/pdf",
-      });
-    await new Promise((resolve) => setTimeout(resolve, 20));
-
-    expect(emailSender.confirmationsSent[0]).toMatchObject({ submitterRole: "spouse", isComplete: true });
-  });
-
-  it("sends two separate confirmation emails, both marked complete, when both files arrive in the same request", async () => {
-    const prisma = createFakePrisma();
-    const { rawToken } = await seedRecord(prisma, {}, { needsSpouseForm: true });
-    const blobStorage = createFakeBlobStorage();
-    const emailSender = createFakeEmailSender();
-    const app = createApp(prisma as any, blobStorage, emailSender);
-
-    const res = await request(app)
-      .post(`/wellness-exam/${rawToken}/upload`)
-      .attach("form", Buffer.from("%PDF-1.4 employee content"), { filename: "mine.pdf", contentType: "application/pdf" })
-      .attach("spouseForm", Buffer.from("%PDF-1.4 spouse content"), {
-        filename: "spouse.pdf",
-        contentType: "application/pdf",
-      });
-
-    expect(res.status).toBe(303);
-    await new Promise((resolve) => setTimeout(resolve, 20));
-    expect(emailSender.confirmationsSent.every((e) => e.isComplete)).toBe(true);
-    expect(emailSender.confirmationsSent).toHaveLength(2);
-    expect(emailSender.confirmationsSent.map((e) => e.submitterRole).sort()).toEqual(["employee", "spouse"]);
-  });
 });
 
 describe("POST /wellness-exam/:token/upload with a linked spouse roster record", () => {
@@ -477,7 +295,7 @@ describe("POST /wellness-exam/:token/upload with a linked spouse roster record",
     return spouse;
   }
 
-  it("shows the spouse file input for an employee with a linked spouse row, even without needsSpouseForm", async () => {
+  it("shows the spouse file input for an employee with a linked spouse row", async () => {
     const prisma = createFakePrisma();
     const { rawToken, employee } = await seedRecord(prisma);
     await seedLinkedSpouse(prisma, employee.id);
@@ -488,7 +306,7 @@ describe("POST /wellness-exam/:token/upload with a linked spouse roster record",
     expect(res.text).toContain('name="spouseForm"');
   });
 
-  it("routes the spouse's uploaded file to the spouse's own PhysicalRecord, not the embedded spouse* fields", async () => {
+  it("routes the spouse's uploaded file to the spouse's own PhysicalRecord, leaving the employee's own record untouched", async () => {
     const prisma = createFakePrisma();
     const { rawToken, record, employee } = await seedRecord(prisma);
     const spouse = await seedLinkedSpouse(prisma, employee.id);
@@ -505,8 +323,8 @@ describe("POST /wellness-exam/:token/upload with a linked spouse roster record",
     expect(res.status).toBe(303);
 
     const employeeRecord = prisma._state.physicalRecords.find((r: any) => r.id === record.id);
-    expect(employeeRecord.spouseReceivedAt).toBeFalsy();
-    expect(employeeRecord.spouseStatus).toBeFalsy();
+    expect(employeeRecord.status).toBe("sent");
+    expect(employeeRecord.uploadedBlobPath).toBeFalsy();
 
     const spouseRecord = prisma._state.physicalRecords.find((r: any) => r.employeeId === spouse.id);
     expect(spouseRecord).toBeTruthy();
@@ -553,6 +371,141 @@ describe("POST /wellness-exam/:token/upload with a linked spouse roster record",
     const spouseRecord = prisma._state.physicalRecords.find((r: any) => r.employeeId === spouse.id);
     expect(spouseRecord.status).toBe("completed");
     expect(spouseRecord.verificationResult).toBe("fake verifier: passed");
+  });
+
+  it("accepts both the employee's and spouse's files in the same request", async () => {
+    const prisma = createFakePrisma();
+    const { rawToken, record, employee } = await seedRecord(prisma);
+    const spouse = await seedLinkedSpouse(prisma, employee.id);
+    const blobStorage = createFakeBlobStorage();
+    const app = createApp(prisma as any, blobStorage, createFakeEmailSender());
+
+    const res = await request(app)
+      .post(`/wellness-exam/${rawToken}/upload`)
+      .attach("form", Buffer.from("%PDF-1.4 employee content"), { filename: "mine.pdf", contentType: "application/pdf" })
+      .attach("spouseForm", Buffer.from("%PDF-1.4 spouse content"), {
+        filename: "spouse.pdf",
+        contentType: "application/pdf",
+      });
+
+    expect(res.status).toBe(303);
+    expect(blobStorage.uploads).toHaveLength(2);
+    const employeeRecord = prisma._state.physicalRecords.find((r: any) => r.id === record.id);
+    expect(employeeRecord.status).toBe("received");
+    expect(employeeRecord.receivedAt).toBeInstanceOf(Date);
+    const spouseRecord = prisma._state.physicalRecords.find((r: any) => r.employeeId === spouse.id);
+    expect(spouseRecord.status).toBe("received");
+    expect(spouseRecord.receivedAt).toBeInstanceOf(Date);
+  });
+
+  it("clears a stale rejection reason on the spouse's own record when resubmitted", async () => {
+    const prisma = createFakePrisma();
+    const { rawToken, employee } = await seedRecord(prisma);
+    const spouse = await seedLinkedSpouse(prisma, employee.id);
+    prisma._state.physicalRecords.push({
+      id: "spouse-rec-rejected",
+      employeeId: spouse.id,
+      cycleYear: 2026,
+      tokenHash: "spouse-hash-rejected",
+      tokenExpiresAt: daysFromNow(10),
+      status: "rejected",
+      rejectionReason: "Old spouse-side reason",
+      createdAt: new Date(),
+    });
+    const blobStorage = createFakeBlobStorage();
+    const app = createApp(prisma as any, blobStorage, createFakeEmailSender());
+
+    const res = await request(app)
+      .post(`/wellness-exam/${rawToken}/upload`)
+      .attach("spouseForm", Buffer.from("%PDF-1.4 spouse content"), {
+        filename: "spouse.pdf",
+        contentType: "application/pdf",
+      });
+
+    expect(res.status).toBe(303);
+    const updated = prisma._state.physicalRecords.find((r: any) => r.id === "spouse-rec-rejected");
+    expect(updated.status).toBe("received");
+    expect(updated.rejectionReason).toBeNull();
+  });
+
+  it("tells the employee their own form is still outstanding when only the spouse's form is submitted", async () => {
+    const prisma = createFakePrisma();
+    const { rawToken, employee } = await seedRecord(prisma);
+    await seedLinkedSpouse(prisma, employee.id);
+    const blobStorage = createFakeBlobStorage();
+    const emailSender = createFakeEmailSender();
+    const app = createApp(prisma as any, blobStorage, emailSender);
+
+    await request(app)
+      .post(`/wellness-exam/${rawToken}/upload`)
+      .attach("spouseForm", Buffer.from("%PDF-1.4 spouse content"), {
+        filename: "spouse.pdf",
+        contentType: "application/pdf",
+      });
+    await new Promise((resolve) => setTimeout(resolve, 20));
+
+    expect(emailSender.confirmationsSent[0].isComplete).toBe(false);
+    expect(emailSender.confirmationsSent[0].link).toContain(`/wellness-exam/${rawToken}`);
+  });
+
+  it("tells the employee the spouse's form is still outstanding when only their own is submitted", async () => {
+    const prisma = createFakePrisma();
+    const { rawToken, employee } = await seedRecord(prisma);
+    await seedLinkedSpouse(prisma, employee.id);
+    const blobStorage = createFakeBlobStorage();
+    const emailSender = createFakeEmailSender();
+    const app = createApp(prisma as any, blobStorage, emailSender);
+
+    await request(app)
+      .post(`/wellness-exam/${rawToken}/upload`)
+      .attach("form", Buffer.from("%PDF-1.4 employee content"), { filename: "mine.pdf", contentType: "application/pdf" });
+    await new Promise((resolve) => setTimeout(resolve, 20));
+
+    expect(emailSender.confirmationsSent).toHaveLength(1);
+    expect(emailSender.confirmationsSent[0]).toMatchObject({ submitterRole: "employee", isComplete: false });
+    expect(emailSender.confirmationsSent[0].link).toContain(`/wellness-exam/${rawToken}`);
+  });
+
+  it("marks the confirmation complete once the spouse's form arrives after the employee's own was already received", async () => {
+    const prisma = createFakePrisma();
+    const { rawToken, employee } = await seedRecord(prisma, { receivedAt: new Date() });
+    await seedLinkedSpouse(prisma, employee.id);
+    const blobStorage = createFakeBlobStorage();
+    const emailSender = createFakeEmailSender();
+    const app = createApp(prisma as any, blobStorage, emailSender);
+
+    await request(app)
+      .post(`/wellness-exam/${rawToken}/upload`)
+      .attach("spouseForm", Buffer.from("%PDF-1.4 spouse content"), {
+        filename: "spouse.pdf",
+        contentType: "application/pdf",
+      });
+    await new Promise((resolve) => setTimeout(resolve, 20));
+
+    expect(emailSender.confirmationsSent[0]).toMatchObject({ submitterRole: "spouse", isComplete: true });
+  });
+
+  it("sends two separate confirmation emails, both marked complete, when both files arrive in the same request", async () => {
+    const prisma = createFakePrisma();
+    const { rawToken, employee } = await seedRecord(prisma);
+    await seedLinkedSpouse(prisma, employee.id);
+    const blobStorage = createFakeBlobStorage();
+    const emailSender = createFakeEmailSender();
+    const app = createApp(prisma as any, blobStorage, emailSender);
+
+    const res = await request(app)
+      .post(`/wellness-exam/${rawToken}/upload`)
+      .attach("form", Buffer.from("%PDF-1.4 employee content"), { filename: "mine.pdf", contentType: "application/pdf" })
+      .attach("spouseForm", Buffer.from("%PDF-1.4 spouse content"), {
+        filename: "spouse.pdf",
+        contentType: "application/pdf",
+      });
+
+    expect(res.status).toBe(303);
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(emailSender.confirmationsSent.every((e) => e.isComplete)).toBe(true);
+    expect(emailSender.confirmationsSent).toHaveLength(2);
+    expect(emailSender.confirmationsSent.map((e) => e.submitterRole).sort()).toEqual(["employee", "spouse"]);
   });
 });
 

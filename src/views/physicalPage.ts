@@ -44,7 +44,7 @@ function renderPreviewColumn(safeToken: string, contentType: string): string {
 }
 
 export interface SpouseFormInfo {
-  needsSpouseForm: boolean;
+  hasLinkedSpouse: boolean;
   spouseReceived: boolean;
 }
 
@@ -61,15 +61,15 @@ export function renderPhysicalPage(
   spouseForm: SpouseFormInfo | null = null
 ): string {
   const safeToken = encodeURIComponent(token);
-  const needsSpouseForm = spouseForm?.needsSpouseForm ?? false;
+  const hasLinkedSpouse = spouseForm?.hasLinkedSpouse ?? false;
 
-  const employeeFileField = needsSpouseForm
+  const employeeFileField = hasLinkedSpouse
     ? `<label for="form">Your completed form / Su formulario completado</label>
     <input type="file" id="form" name="form" accept=".pdf,.jpg,.jpeg,.png" />`
     : `<label for="form">Completed form / Formulario completado</label>
     <input type="file" id="form" name="form" accept=".pdf,.jpg,.jpeg,.png" required />`;
 
-  const spouseFileField = needsSpouseForm
+  const spouseFileField = hasLinkedSpouse
     ? `<label for="spouseForm">Spouse's completed form / Formulario completado del cónyuge</label>
     <input type="file" id="spouseForm" name="spouseForm" accept=".pdf,.jpg,.jpeg,.png" />
     ${spouseStatusLine(spouseForm!.spouseReceived)}`

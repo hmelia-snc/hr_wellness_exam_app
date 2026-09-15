@@ -536,173 +536,6 @@ describe("POST /dashboard/records/:id/reject", () => {
   });
 });
 
-describe("POST /dashboard/records/:id/approve-spouse", () => {
-  it("marks the spouse form completed independently of the employee's own status", async () => {
-    const prisma = createFakePrisma();
-    const { record } = await seedEmployeeAndRecord(
-      prisma,
-      { status: "needs_review", spouseReceivedAt: new Date() },
-      { needsSpouseForm: true }
-    );
-    const app = createApp(prisma as any, createFakeBlobStorage(), createFakeEmailSender());
-    const agent = request.agent(app);
-    await agent.post("/auth/login").type("form").send({ returnTo: "/dashboard" });
-
-    const res = await agent.post(`/dashboard/records/${record.id}/approve-spouse?year=2026`);
-    expect(res.status).toBe(303);
-    expect(res.headers.location).toBe("/dashboard?year=2026");
-
-    const updated = prisma._state.physicalRecords.find((r: any) => r.id === record.id);
-    expect(updated.spouseStatus).toBe("completed");
-    expect(updated.spouseCompletedAt).toBeInstanceOf(Date);
-    expect(updated.spouseReviewedBy).toBe("dev-hr@standardnutrition.com");
-    // The employee's own status/fields are untouched — the two are reviewed
-    // independently.
-    expect(updated.status).toBe("needs_review");
-  });
-
-  it("requires auth", async () => {
-    const prisma = createFakePrisma();
-    const { record } = await seedEmployeeAndRecord(prisma, { spouseReceivedAt: new Date() }, { needsSpouseForm: true });
-    const app = createApp(prisma as any, createFakeBlobStorage(), createFakeEmailSender());
-
-    const res = await request(app).post(`/dashboard/records/${record.id}/approve-spouse`);
-    expect(res.status).toBe(302);
-    expect(res.headers.location).toMatch(/^\/auth\/login/);
-  });
-
-  it("does not approve the spouse form when the employee is inactive", async () => {
-    const prisma = createFakePrisma();
-    const { record } = await seedEmployeeAndRecord(prisma, { spouseReceivedAt: new Date() }, { needsSpouseForm: true });
-    prisma._state.employeesByEmail.get("jane.doe@example.com").active = false;
-    const app = createApp(prisma as any, createFakeBlobStorage(), createFakeEmailSender());
-    const agent = request.agent(app);
-    await agent.post("/auth/login").type("form").send({ returnTo: "/dashboard" });
-
-    const res = await agent.post(`/dashboard/records/${record.id}/approve-spouse?year=2026`);
-    expect(res.status).toBe(303);
-
-    const updated = prisma._state.physicalRecords.find((r: any) => r.id === record.id);
-    expect(updated.spouseStatus).toBeUndefined();
-  });
-});
-
-describe("POST /dashboard/records/:id/reject-spouse", () => {
-  it("marks the spouse form rejected, clears spouseReceivedAt/spouseCompletedAt, and emails the employee about their spouse's form", async () => {
-    const prisma = createFakePrisma();
-    const emailSender = createFakeEmailSender();
-    const { record } = await seedEmployeeAndRecord(
-      prisma,
-      { spouseReceivedAt: new Date(), rawToken: "existing-raw-token" },
-      { needsSpouseForm: true }
-    );
-    const app = createApp(prisma as any, createFakeBlobStorage(), emailSender);
-    const agent = request.agent(app);
-    await agent.post("/auth/login").type("form").send({ returnTo: "/dashboard" });
-
-    const res = await agent
-      .post(`/dashboard/records/${record.id}/reject-spouse?year=2026`)
-      .type("form")
-      .send({ reason: "Spouse signature is missing." });
-    expect(res.status).toBe(303);
-    expect(res.headers.location).toBe("/dashboard?year=2026");
-
-    const updated = prisma._state.physicalRecords.find((r: any) => r.id === record.id);
-    expect(updated.spouseStatus).toBe("rejected");
-    expect(updated.spouseRejectionReason).toBe("Spouse signature is missing.");
-    expect(updated.spouseReceivedAt).toBeNull();
-    expect(updated.spouseCompletedAt).toBeNull();
-    expect(updated.spouseReviewedBy).toBe("dev-hr@standardnutrition.com");
-    // Rejecting the spouse's form must not touch the employee's own status.
-    expect(updated.status).toBe("sent");
-
-    expect(emailSender.rejectionsSent).toHaveLength(1);
-    expect(emailSender.rejectionsSent[0]).toMatchObject({
-      reason: "Spouse signature is missing.",
-      submitterRole: "spouse",
-      link: expect.stringContaining("/wellness-exam/existing-raw-token"),
-    });
-  });
-
-  it("requires a non-empty reason", async () => {
-    const prisma = createFakePrisma();
-    const { record } = await seedEmployeeAndRecord(prisma, { spouseReceivedAt: new Date() }, { needsSpouseForm: true });
-    const app = createApp(prisma as any, createFakeBlobStorage(), createFakeEmailSender());
-    const agent = request.agent(app);
-    await agent.post("/auth/login").type("form").send({ returnTo: "/dashboard" });
-
-    const res = await agent.post(`/dashboard/records/${record.id}/reject-spouse?year=2026`).type("form").send({ reason: "  " });
-    expect(res.status).toBe(400);
-  });
-
-  it("requires auth", async () => {
-    const prisma = createFakePrisma();
-    const { record } = await seedEmployeeAndRecord(prisma, { spouseReceivedAt: new Date() }, { needsSpouseForm: true });
-    const app = createApp(prisma as any, createFakeBlobStorage(), createFakeEmailSender());
-
-    const res = await request(app).post(`/dashboard/records/${record.id}/reject-spouse`).type("form").send({ reason: "x" });
-    expect(res.status).toBe(302);
-    expect(res.headers.location).toMatch(/^\/auth\/login/);
-  });
-});
-
-describe("Dashboard: separate employee/spouse status and actions", () => {
-  it("shows independent status badges, and Approve/Reject buttons, for employee vs spouse forms", async () => {
-    const prisma = createFakePrisma();
-    const { record } = await seedEmployeeAndRecord(
-      prisma,
-      { status: "needs_review", spouseReceivedAt: new Date(), spouseStatus: "received" },
-      { needsSpouseForm: true }
-    );
-    const app = createApp(prisma as any, createFakeBlobStorage(), createFakeEmailSender());
-    const agent = request.agent(app);
-    await agent.post("/auth/login").type("form").send({ returnTo: "/dashboard" });
-
-    const res = await agent.get("/dashboard?year=2026");
-    expect(res.status).toBe(200);
-    // Employee-side actions, disambiguated with "Employee" once a spouse
-    // form is also in play.
-    expect(res.text).toContain("Approve Employee");
-    expect(res.text).toContain("Reject Employee");
-    // Spouse-side actions.
-    expect(res.text).toContain(`records/${record.id}/approve-spouse?`);
-    expect(res.text).toContain("Approve Spouse");
-    expect(res.text).toContain("Reject Spouse");
-    // Both statuses rendered independently.
-    expect(res.text).toContain("needs_review");
-    expect(res.text).toMatch(/Spouse:.*received/s);
-  });
-
-  it("hides spouse Approve/Reject once the spouse form has already been decided", async () => {
-    const prisma = createFakePrisma();
-    const { record } = await seedEmployeeAndRecord(
-      prisma,
-      { spouseReceivedAt: new Date(), spouseStatus: "completed" },
-      { needsSpouseForm: true }
-    );
-    const app = createApp(prisma as any, createFakeBlobStorage(), createFakeEmailSender());
-    const agent = request.agent(app);
-    await agent.post("/auth/login").type("form").send({ returnTo: "/dashboard" });
-
-    const res = await agent.get("/dashboard?year=2026");
-    expect(res.text).not.toContain(`records/${record.id}/approve-spouse?`);
-    expect(res.text).not.toContain("Reject Spouse");
-  });
-
-  it("hides spouse Approve/Reject until the spouse form is actually received", async () => {
-    const prisma = createFakePrisma();
-    const { record } = await seedEmployeeAndRecord(prisma, { spouseReceivedAt: null }, { needsSpouseForm: true });
-    const app = createApp(prisma as any, createFakeBlobStorage(), createFakeEmailSender());
-    const agent = request.agent(app);
-    await agent.post("/auth/login").type("form").send({ returnTo: "/dashboard" });
-
-    const res = await agent.get("/dashboard?year=2026");
-    expect(res.text).not.toContain(`records/${record.id}/approve-spouse?`);
-    expect(res.text).not.toContain("Reject Spouse");
-    expect(res.text).toContain("not received");
-  });
-});
-
 describe("Dashboard bulk actions", () => {
   it("bulk-approves selected records", async () => {
     const prisma = createFakePrisma();
@@ -792,7 +625,18 @@ describe("Dashboard bulk actions", () => {
 });
 
 describe("GET /dashboard progress column", () => {
-  it("shows 1 of 1 for an employee who doesn't need a spouse form", async () => {
+  it("shows 0 of 1 for a record that hasn't been received yet", async () => {
+    const prisma = createFakePrisma();
+    await seedEmployeeAndRecord(prisma);
+    const app = createApp(prisma as any, createFakeBlobStorage(), createFakeEmailSender());
+    const agent = request.agent(app);
+    await agent.post("/auth/login").type("form").send({ returnTo: "/dashboard" });
+
+    const res = await agent.get("/dashboard?year=2026");
+    expect(res.text).toContain("0 of 1");
+  });
+
+  it("shows 1 of 1 once received — every record (including a spouse's own) tracks progress independently", async () => {
     const prisma = createFakePrisma();
     await seedEmployeeAndRecord(prisma, { receivedAt: new Date() });
     const app = createApp(prisma as any, createFakeBlobStorage(), createFakeEmailSender());
@@ -801,32 +645,6 @@ describe("GET /dashboard progress column", () => {
 
     const res = await agent.get("/dashboard?year=2026");
     expect(res.text).toContain("1 of 1");
-  });
-
-  it("shows 0 of 2 when a spouse form is needed and neither file has arrived", async () => {
-    const prisma = createFakePrisma();
-    await seedEmployeeAndRecord(prisma, {}, { needsSpouseForm: true });
-    const app = createApp(prisma as any, createFakeBlobStorage(), createFakeEmailSender());
-    const agent = request.agent(app);
-    await agent.post("/auth/login").type("form").send({ returnTo: "/dashboard" });
-
-    const res = await agent.get("/dashboard?year=2026");
-    expect(res.text).toContain("0 of 2");
-  });
-
-  it("shows 2 of 2 once both the employee's and spouse's forms have arrived", async () => {
-    const prisma = createFakePrisma();
-    await seedEmployeeAndRecord(
-      prisma,
-      { receivedAt: new Date(), spouseReceivedAt: new Date() },
-      { needsSpouseForm: true }
-    );
-    const app = createApp(prisma as any, createFakeBlobStorage(), createFakeEmailSender());
-    const agent = request.agent(app);
-    await agent.post("/auth/login").type("form").send({ returnTo: "/dashboard" });
-
-    const res = await agent.get("/dashboard?year=2026");
-    expect(res.text).toContain("2 of 2");
   });
 });
 
@@ -953,44 +771,25 @@ describe("Dashboard: Waiting on Spouse status", () => {
     expect(res.text).not.toContain("Waiting on Spouse");
   });
 
-  it("shows Waiting on Spouse (legacy embedded model) when the employee is completed but spouseStatus isn't", async () => {
-    const prisma = createFakePrisma();
-    await seedEmployeeAndRecord(
-      prisma,
-      { status: "completed", receivedAt: new Date(), completedAt: new Date(), spouseStatus: "received" },
-      { needsSpouseForm: true }
-    );
-    const app = createApp(prisma as any, createFakeBlobStorage(), createFakeEmailSender());
-    const agent = request.agent(app);
-    await agent.post("/auth/login").type("form").send({ returnTo: "/dashboard" });
-
-    const res = await agent.get("/dashboard?year=2026");
-    expect(res.text).toContain('<span class="status-badge status-waiting_on_spouse"');
-    expect(res.text).toContain("Waiting on Spouse");
-  });
-
-  it("shows Completed (legacy embedded model) once spouseStatus is also completed", async () => {
-    const prisma = createFakePrisma();
-    await seedEmployeeAndRecord(
-      prisma,
-      { status: "completed", receivedAt: new Date(), completedAt: new Date(), spouseStatus: "completed" },
-      { needsSpouseForm: true }
-    );
-    const app = createApp(prisma as any, createFakeBlobStorage(), createFakeEmailSender());
-    const agent = request.agent(app);
-    await agent.post("/auth/login").type("form").send({ returnTo: "/dashboard" });
-
-    const res = await agent.get("/dashboard?year=2026");
-    expect(res.text).not.toContain('class="status-badge status-waiting_on_spouse"');
-  });
-
   it("filters by ?status=waiting_on_spouse and excludes those rows from ?status=completed", async () => {
     const prisma = createFakePrisma();
-    await seedEmployeeAndRecord(
+    const { employee: waitingEmployee } = await seedEmployeeAndRecord(
       prisma,
-      { status: "completed", receivedAt: new Date(), completedAt: new Date(), spouseStatus: "received" },
-      { needsSpouseForm: true, email: "waiting@example.com", fullName: "Waiting Person" }
+      { status: "completed", receivedAt: new Date(), completedAt: new Date() },
+      { email: "waiting@example.com", fullName: "Waiting Person" }
     );
+    const waitingSpouse = await prisma.employee.create({
+      data: { fullName: "Waiting Spouse", recordType: "spouse", linkedEmployeeId: waitingEmployee.id, active: true },
+    });
+    prisma._state.physicalRecords.push({
+      id: "spouse-rec-filter",
+      employeeId: waitingSpouse.id,
+      cycleYear: 2026,
+      tokenHash: "spouse-hash-filter",
+      tokenExpiresAt: new Date(Date.now() + 1000 * 60 * 60 * 24 * 30),
+      status: "sent",
+      createdAt: new Date(),
+    });
     await seedEmployeeAndRecord(
       prisma,
       { id: "rec-2", status: "completed", receivedAt: new Date(), completedAt: new Date() },
@@ -1011,11 +810,19 @@ describe("Dashboard: Waiting on Spouse status", () => {
 
   it("reflects waiting_on_spouse in the CSV export's Status column", async () => {
     const prisma = createFakePrisma();
-    await seedEmployeeAndRecord(
-      prisma,
-      { status: "completed", receivedAt: new Date(), completedAt: new Date(), spouseStatus: "received" },
-      { needsSpouseForm: true }
-    );
+    const { employee } = await seedEmployeeAndRecord(prisma, { status: "completed", receivedAt: new Date(), completedAt: new Date() });
+    const spouse = await prisma.employee.create({
+      data: { fullName: "Export Spouse", recordType: "spouse", linkedEmployeeId: employee.id, active: true },
+    });
+    prisma._state.physicalRecords.push({
+      id: "spouse-rec-export",
+      employeeId: spouse.id,
+      cycleYear: 2026,
+      tokenHash: "spouse-hash-export",
+      tokenExpiresAt: new Date(Date.now() + 1000 * 60 * 60 * 24 * 30),
+      status: "sent",
+      createdAt: new Date(),
+    });
     const app = createApp(prisma as any, createFakeBlobStorage(), createFakeEmailSender());
     const agent = request.agent(app);
     await agent.post("/auth/login").type("form").send({ returnTo: "/dashboard" });
@@ -1076,59 +883,19 @@ describe("GET /dashboard/records/:id/file", () => {
   });
 });
 
-describe("GET /dashboard/records/:id/spouse-file", () => {
-  it("streams the spouse's uploaded file and logs it separately from the employee's", async () => {
-    const prisma = createFakePrisma();
-    const blobStorage = createFakeBlobStorage();
-    const spouseBlobPath = "uploads/2026/rec-1/spouse-signed.pdf";
-    await blobStorage.uploadForm(Buffer.from("%PDF-1.4 spouse content"), spouseBlobPath, "application/pdf");
-    const { record } = await seedEmployeeAndRecord(
-      prisma,
-      { spouseUploadedBlobPath: spouseBlobPath, spouseUploadedContentType: "application/pdf" },
-      { needsSpouseForm: true }
-    );
-    const app = createApp(prisma as any, blobStorage, createFakeEmailSender());
-    const agent = request.agent(app);
-    await agent.post("/auth/login").type("form").send({ returnTo: "/dashboard" });
-
-    const res = await agent.get(`/dashboard/records/${record.id}/spouse-file`);
-    expect(res.status).toBe(200);
-    expect(res.headers["content-type"]).toBe("application/pdf");
-
-    expect(prisma._state.fileAccessLogs).toHaveLength(1);
-    expect(prisma._state.fileAccessLogs[0].fileType).toBe("spouse");
-  });
-
-  it("404s when there's no spouse file", async () => {
-    const prisma = createFakePrisma();
-    const { record } = await seedEmployeeAndRecord(prisma);
-    const app = createApp(prisma as any, createFakeBlobStorage(), createFakeEmailSender());
-    const agent = request.agent(app);
-    await agent.post("/auth/login").type("form").send({ returnTo: "/dashboard" });
-
-    const res = await agent.get(`/dashboard/records/${record.id}/spouse-file`);
-    expect(res.status).toBe(404);
-  });
-});
-
 describe("Dashboard view-file links", () => {
-  it("shows View file / View spouse file links only when those files exist", async () => {
+  it("shows the View file link only when a file exists", async () => {
     const prisma = createFakePrisma();
-    await seedEmployeeAndRecord(
-      prisma,
-      { uploadedBlobPath: "uploads/2026/rec-1/signed.pdf", spouseUploadedBlobPath: "uploads/2026/rec-1/spouse.pdf" },
-      { needsSpouseForm: true }
-    );
+    await seedEmployeeAndRecord(prisma, { uploadedBlobPath: "uploads/2026/rec-1/signed.pdf" });
     const app = createApp(prisma as any, createFakeBlobStorage(), createFakeEmailSender());
     const agent = request.agent(app);
     await agent.post("/auth/login").type("form").send({ returnTo: "/dashboard" });
 
     const res = await agent.get("/dashboard?year=2026");
     expect(res.text).toContain("/dashboard/records/rec-1/file");
-    expect(res.text).toContain("/dashboard/records/rec-1/spouse-file");
   });
 
-  it("hides both view-file links when no files have been uploaded", async () => {
+  it("hides the view-file link when no file has been uploaded", async () => {
     const prisma = createFakePrisma();
     await seedEmployeeAndRecord(prisma);
     const app = createApp(prisma as any, createFakeBlobStorage(), createFakeEmailSender());
@@ -1137,7 +904,6 @@ describe("Dashboard view-file links", () => {
 
     const res = await agent.get("/dashboard?year=2026");
     expect(res.text).not.toContain("View file");
-    expect(res.text).not.toContain("View spouse file");
   });
 });
 
@@ -1165,9 +931,7 @@ describe("GET /dashboard/export", () => {
     expect(res.headers["content-disposition"]).toMatch(/hr-dashboard-2026\.csv/);
 
     const lines = res.text.trim().split("\n");
-    expect(lines[0]).toBe(
-      "Employee,Email,Record Type,Status,Sent,Received,Completed,Needs Spouse Form,Spouse Received,Verification Result,Rejection Reason,Spouse Status,Spouse Rejection Reason"
-    );
+    expect(lines[0]).toBe("Employee,Email,Record Type,Status,Sent,Received,Completed,Verification Result,Rejection Reason");
     expect(lines[1]).toContain("Jane Doe");
     expect(lines[1]).toContain("jane.doe@example.com");
     expect(lines[1]).toContain("completed");

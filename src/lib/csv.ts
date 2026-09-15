@@ -2,17 +2,15 @@ import { parse } from "csv-parse/sync";
 import { z } from "zod";
 
 export interface EmployeeCsvRow {
-  // "employee" (default, when the column is absent — every pre-existing CSV
-  // keeps working unchanged) or "spouse". A spouse row is linked back to an
-  // employee row via linkedEmployeeEmail instead of getting its own upload
-  // link/email.
+  // "employee" (default, when the column is absent) or "spouse". A spouse
+  // row is linked back to an employee row via linkedEmployeeEmail instead
+  // of getting its own upload link/email.
   recordType: "employee" | "spouse";
   fullName: string;
   // Required for an "employee" row; optional for a "spouse" row, which
   // commonly has none.
   email?: string;
   employeeIdExternal?: string;
-  needsSpouseForm?: boolean;
   // Only set (and required) on a "spouse" row: the email of the employee
   // row it should be linked to.
   linkedEmployeeEmail?: string;
@@ -35,21 +33,8 @@ const rawRowSchema = z.object({
   email: z.string().optional(),
   employee_id_external: z.string().optional(),
   employee_id: z.string().optional(),
-  needs_spouse_form: z.string().optional(),
   linked_employee_email: z.string().optional(),
 });
-
-const TRUTHY_VALUES = new Set(["true", "yes", "y", "1", "x"]);
-
-/**
- * Column absent from the file entirely -> undefined (don't touch an existing
- * value on re-import). Present but empty or a falsy word -> false. Anything
- * else recognizable as truthy -> true.
- */
-function parseNeedsSpouseForm(raw: string | undefined): boolean | undefined {
-  if (raw === undefined) return undefined;
-  return TRUTHY_VALUES.has(raw.trim().toLowerCase());
-}
 
 /**
  * Parses a CSV of employees. Accepts either "full_name" or "name", and
@@ -147,9 +132,7 @@ export function parseEmployeeCsv(csvContent: string): CsvParseResult {
     }
     seenEmails.add(email);
 
-    const needsSpouseForm = parseNeedsSpouseForm(parsed.data.needs_spouse_form);
-
-    rows.push({ recordType: "employee", fullName, email, employeeIdExternal, needsSpouseForm });
+    rows.push({ recordType: "employee", fullName, email, employeeIdExternal });
   });
 
   return { rows, errors };

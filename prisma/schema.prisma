@@ -24,18 +24,11 @@ model Employee {
   email               String?  @unique
   employeeIdExternal  String?
   active              Boolean  @default(true)
-  // Deprecated in favor of recordType/linkedEmployeeId below (an employee
-  // that needs a spouse form now gets an actual linked spouse roster row
-  // instead of this boolean) but left in place, still driving any existing
-  // record created under the old model — see PhysicalRecord.spouse* fields.
-  needsSpouseForm     Boolean  @default(false)
   createdAt           DateTime @default(now())
 
-  // "employee" (default) or "spouse". A spouse is now its own roster line —
-  // its own dashboard row, its own PhysicalRecord per cycle, reviewed with
-  // the same Approve/Reject actions as anyone else — rather than the
-  // spouse's upload/status being extra fields bolted onto the employee's
-  // own PhysicalRecord (the older model above). Still submitted through the
+  // "employee" (default) or "spouse". A spouse is its own roster line — its
+  // own dashboard row, its own PhysicalRecord per cycle, reviewed with the
+  // same Approve/Reject actions as anyone else. Still submitted through the
   // employee's existing upload link, though: no separate email/login for
   // the spouse, just its own tracking record underneath.
   recordType          String     @default("employee")
@@ -72,25 +65,10 @@ model PhysicalRecord {
   uploadedFileUrl    String?
   uploadedBlobPath   String?
   uploadedContentType String?
-  spouseUploadedFileUrl    String?
-  spouseUploadedBlobPath   String?
-  spouseUploadedContentType String?
-  spouseReceivedAt   DateTime?
   verificationResult String?
   rejectionReason    String?
   reviewedBy         String?
   reviewedAt         DateTime?
-  // Mirror of the fields above, but for the spouse's own upload — HR reviews
-  // and approves/rejects each side of the form independently now, rather
-  // than the spouse's file just sitting there with no review state at all.
-  // No auto-OCR check runs on it (only the employee's own upload gets that);
-  // this is manual-review-only for now.
-  spouseStatus             String?
-  spouseVerificationResult String?
-  spouseRejectionReason    String?
-  spouseReviewedBy         String?
-  spouseReviewedAt        DateTime?
-  spouseCompletedAt       DateTime?
   createdAt          DateTime  @default(now())
   updatedAt          DateTime  @updatedAt
 
@@ -116,7 +94,7 @@ model UploadBatch {
 model FileAccessLog {
   id               String   @id @default(uuid())
   physicalRecordId String
-  fileType         String // "employee" | "spouse"
+  fileType         String // "employee" (only value recorded going forward)
   viewedBy         String // email of the HR user, or the employee's own email via their token
   viewedAt         DateTime @default(now())
 

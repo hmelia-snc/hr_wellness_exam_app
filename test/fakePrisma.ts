@@ -32,7 +32,6 @@ export function createFakePrisma() {
         const created = {
           id: randomUUID(),
           active: true,
-          needsSpouseForm: false,
           recordType: "employee",
           linkedEmployeeId: null,
           email: where.email ?? null,
@@ -45,7 +44,6 @@ export function createFakePrisma() {
         const created = {
           id: randomUUID(),
           active: true,
-          needsSpouseForm: false,
           recordType: "employee",
           linkedEmployeeId: null,
           email: null,

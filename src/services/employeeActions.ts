@@ -9,9 +9,6 @@ export interface UpsertEmployeeInput {
   email: string;
   employeeIdExternal?: string;
   cycleYear: number;
-  // undefined = don't touch the existing value (e.g. a CSV re-import with no
-  // needs_spouse_form column shouldn't clobber a value set later in the UI).
-  needsSpouseForm?: boolean;
 }
 
 export interface UpsertEmployeeResult {
@@ -41,13 +38,11 @@ export async function upsertEmployeeAndSendLink(
       fullName: input.fullName,
       employeeIdExternal: input.employeeIdExternal,
       active: true,
-      ...(input.needsSpouseForm !== undefined ? { needsSpouseForm: input.needsSpouseForm } : {}),
     },
     update: {
       fullName: input.fullName,
       employeeIdExternal: input.employeeIdExternal,
       active: true,
-      ...(input.needsSpouseForm !== undefined ? { needsSpouseForm: input.needsSpouseForm } : {}),
     },
   });
 
@@ -203,6 +198,7 @@ interface EmployeeRecord {
   // Nullable: a spouse row (recordType "spouse") commonly has none, since
   // it never gets independent link/email delivery of its own.
   email: string | null;
+  recordType: string;
 }
 interface ResetRecordResult {
   rawToken: string;
@@ -255,9 +251,8 @@ async function resetRecordWithFreshToken(prisma: PrismaClient, physicalRecordId:
 /**
  * Manually marks a record `completed` — the same transition the OCR pass
  * applies automatically, just triggered by HR instead. Shared by the
- * single-record and bulk "Approve" actions. This is specifically the
- * employee's own upload; see approveSpouseForm for the spouse's, tracked
- * independently since the two are reviewed separately.
+ * single-record and bulk "Approve" actions. Works the same for an employee's
+ * own record or a spouse's own record — each is just a PhysicalRecord.
  */
 export async function approveRecord(prisma: PrismaClient, physicalRecordId: string, reviewedBy: string): Promise<void> {
   await prisma.physicalRecord.update({
@@ -272,25 +267,6 @@ export async function approveRecord(prisma: PrismaClient, physicalRecordId: stri
   });
 }
 
-/**
- * Same as approveRecord, but for the spouse's upload — tracked in its own
- * set of fields (spouseStatus/spouseCompletedAt/etc.) since HR reviews each
- * side of the form independently. No OCR ever runs on the spouse's upload,
- * so this manual approval is the only way it ever reaches "completed".
- */
-export async function approveSpouseForm(prisma: PrismaClient, physicalRecordId: string, reviewedBy: string): Promise<void> {
-  await prisma.physicalRecord.update({
-    where: { id: physicalRecordId },
-    data: {
-      spouseStatus: "completed",
-      spouseCompletedAt: new Date(),
-      spouseReviewedBy: reviewedBy,
-      spouseReviewedAt: new Date(),
-      spouseVerificationResult: `Manually approved by ${reviewedBy}.`,
-    },
-  });
-}
-
 export interface ResendLinkResult {
   emailSent: boolean;
   emailError?: string;
@@ -301,19 +277,31 @@ export interface ResendLinkResult {
  * old one), resets it to a clean `sent` state, and re-sends the email.
  * Available regardless of current status: covers a lost/expired link, and
  * also doubles as "force a re-upload" for a needs_review case.
+ *
+ * Checks for an email up front, before touching anything — a spouse's own
+ * record commonly has none, and resetting (wiping received/completed
+ * status back to "sent") is destructive, so a record with no one to notify
+ * is left alone rather than reset and then just reported as unsent.
  */
 export async function resendLink(
   prisma: PrismaClient,
   emailSender: EmailSender,
   physicalRecordId: string
 ): Promise<ResendLinkResult> {
-  const env = getEnv();
-  const { rawToken, cycleYear, employee } = await resetRecordWithFreshToken(prisma, physicalRecordId);
-
+  const record = await prisma.physicalRecord.findUnique({ where: { id: physicalRecordId } });
+  if (!record) {
+    throw new Error(`No physical record found with id ${physicalRecordId}`);
+  }
+  const employee = await prisma.employee.findUnique({ where: { id: record.employeeId } });
+  if (!employee) {
+    throw new Error(`No employee found with id ${record.employeeId}`);
+  }
   if (!employee.email) {
     return { emailSent: false, emailError: "No email on file for this record." };
   }
 
+  const env = getEnv();
+  const { rawToken, cycleYear } = await resetRecordWithFreshToken(prisma, physicalRecordId);
   const link = `${env.APP_BASE_URL}/wellness-exam/${rawToken}`;
   try {
     await emailSender.send({ toEmail: employee.email, toName: employee.fullName, link, cycleYear });
@@ -337,15 +325,26 @@ export interface ShareableLinkResult {
   // link previously sent to the employee no longer works. False is the
   // common case: the employee's existing link is simply being shown again.
   regenerated: boolean;
+  // "spouse" when physicalRecordId belongs to a spouse's own record — the
+  // link/name/email above are already resolved to the linked primary
+  // employee in that case (see below), so callers building a "your form" vs
+  // "your spouse's form" email just need this flag, not the distinction
+  // themselves.
+  submitterRole: "employee" | "spouse";
 }
 
 /**
- * Returns the employee's current upload link for HR to grab from the
- * dashboard (Slack, Teams, in person, etc.) — without regenerating it, so
- * whatever link was already emailed to the employee keeps working. Only
- * falls back to generating (and thereby invalidating) a fresh token when
- * there's no usable one already: either none stored (a record created
- * before `rawToken` existed), or the stored one has expired.
+ * Returns the current upload link for HR to grab from the dashboard (Slack,
+ * Teams, in person, etc.) — without regenerating it, so whatever link was
+ * already emailed keeps working. Only falls back to generating (and thereby
+ * invalidating) a fresh token when there's no usable one already: either
+ * none stored (a record created before `rawToken` existed), or the stored
+ * one has expired.
+ *
+ * A spouse's own record has no independent link/email of its own — the
+ * spouse always submits (and resubmits) through the linked primary
+ * employee's own upload link — so for a spouse-owned physicalRecordId this
+ * resolves against the primary's record for the same cycle instead.
  */
 export async function getShareableLink(prisma: PrismaClient, physicalRecordId: string): Promise<ShareableLinkResult> {
   const env = getEnv();
@@ -358,6 +357,16 @@ export async function getShareableLink(prisma: PrismaClient, physicalRecordId: s
     throw new Error(`No employee found with id ${record.employeeId}`);
   }
 
+  if (employee.recordType === "spouse" && employee.linkedEmployeeId) {
+    const primaryRecord = await prisma.physicalRecord.findUnique({
+      where: { employeeId_cycleYear: { employeeId: employee.linkedEmployeeId, cycleYear: record.cycleYear } },
+    });
+    if (primaryRecord) {
+      const primaryResult = await getShareableLink(prisma, primaryRecord.id);
+      return { ...primaryResult, submitterRole: "spouse" };
+    }
+  }
+
   if (record.rawToken && record.tokenExpiresAt.getTime() >= Date.now()) {
     return {
       link: `${env.APP_BASE_URL}/wellness-exam/${record.rawToken}`,
@@ -365,6 +374,7 @@ export async function getShareableLink(prisma: PrismaClient, physicalRecordId: s
       employeeEmail: employee.email,
       cycleYear: record.cycleYear,
       regenerated: false,
+      submitterRole: "employee",
     };
   }
 
@@ -375,6 +385,7 @@ export async function getShareableLink(prisma: PrismaClient, physicalRecordId: s
     employeeEmail: reset.employee.email,
     cycleYear: reset.cycleYear,
     regenerated: true,
+    submitterRole: "employee",
   };
 }
 
@@ -384,16 +395,15 @@ export interface RejectRecordResult {
 }
 
 /**
- * Marks a record `rejected` with a reason and emails the employee. Clears
+ * Marks a record `rejected` with a reason and emails whoever it belongs to
+ * (the employee, or — for a spouse's own record — the employee, since the
+ * spouse has no separate email/link of their own). Clears
  * receivedAt/completedAt so status/progress correctly show "not yet
  * received" until a corrected form comes in — but deliberately leaves the
  * uploaded file/blob alone so HR can still pull up what was rejected via
- * "View file". Reuses the employee's existing link rather than invalidating
- * it (same as getShareableLink), so they can fix and resubmit with the link
- * they already have — only falls back to a fresh token if theirs expired.
- * This is specifically the employee's own upload; see rejectSpouseForm for
- * the spouse's, tracked independently since the two are reviewed
- * separately.
+ * "View file". Reuses the existing link rather than invalidating it (same as
+ * getShareableLink), so it can be fixed and resubmitted with the link
+ * already on hand — only falls back to a fresh token if it expired.
  */
 export async function rejectRecord(
   prisma: PrismaClient,
@@ -427,7 +437,7 @@ export async function rejectRecord(
       cycleYear: linkResult.cycleYear,
       reason,
       link: linkResult.link,
-      submitterRole: "employee",
+      submitterRole: linkResult.submitterRole,
     });
     return { emailSent: true };
   } catch (err) {
@@ -437,72 +447,16 @@ export async function rejectRecord(
   }
 }
 
-/**
- * Same as rejectRecord, but for the spouse's upload: marks spouseStatus
- * `rejected`, clears spouseReceivedAt/spouseCompletedAt (leaving the
- * uploaded blob alone so HR can still view what was rejected), and emails
- * the employee — the spouse has no separate email/link of their own, so the
- * same "your spouse's form" email goes to the employee's address, with
- * their shared existing link to resubmit through.
- */
-export async function rejectSpouseForm(
-  prisma: PrismaClient,
-  emailSender: EmailSender,
-  physicalRecordId: string,
-  reason: string,
-  reviewedBy: string
-): Promise<RejectRecordResult> {
-  const linkResult = await getShareableLink(prisma, physicalRecordId);
-
-  await prisma.physicalRecord.update({
-    where: { id: physicalRecordId },
-    data: {
-      spouseStatus: "rejected",
-      spouseRejectionReason: reason,
-      spouseReceivedAt: null,
-      spouseCompletedAt: null,
-      spouseReviewedBy: reviewedBy,
-      spouseReviewedAt: new Date(),
-    },
-  });
-
-  if (!linkResult.employeeEmail) {
-    return { emailSent: false, emailError: "No email on file for this record." };
-  }
-
-  try {
-    await emailSender.sendRejection({
-      toEmail: linkResult.employeeEmail,
-      toName: linkResult.employeeName,
-      cycleYear: linkResult.cycleYear,
-      reason,
-      link: linkResult.link,
-      submitterRole: "spouse",
-    });
-    return { emailSent: true };
-  } catch (err) {
-    const emailError = err instanceof Error ? err.message : String(err);
-    console.error(`[rejectSpouseForm] email send failed for record ${physicalRecordId} (${linkResult.employeeEmail}):`, emailError);
-    return { emailSent: false, emailError };
-  }
-}
-
 /** Deletes one employee's own records/blobs (not the Employee row itself) — shared by deleteEmployee below. */
 async function purgeRecordsAndBlobs(prisma: PrismaClient, blobStorage: BlobStorage, employeeId: string): Promise<void> {
   const records = await prisma.physicalRecord.findMany({ where: { employeeId } });
 
   for (const record of records) {
-    // spouseUploadedBlobPath is only ever populated under the older,
-    // pre-record-type model (spouse upload embedded on the employee's own
-    // record) — a linked spouse row (recordType "spouse") has its own
-    // PhysicalRecord, purged via its own pass through this same function.
-    for (const blobPath of [record.uploadedBlobPath, record.spouseUploadedBlobPath]) {
-      if (!blobPath) continue;
-      try {
-        await blobStorage.deleteForm(blobPath);
-      } catch (err) {
-        console.error(`[deleteEmployee] failed to delete blob ${blobPath}:`, err instanceof Error ? err.message : err);
-      }
+    if (!record.uploadedBlobPath) continue;
+    try {
+      await blobStorage.deleteForm(record.uploadedBlobPath);
+    } catch (err) {
+      console.error(`[deleteEmployee] failed to delete blob ${record.uploadedBlobPath}:`, err instanceof Error ? err.message : err);
     }
   }
 
@@ -511,11 +465,10 @@ async function purgeRecordsAndBlobs(prisma: PrismaClient, blobStorage: BlobStora
 
 /**
  * Full purge: deletes the employee, every physical_records row across all
- * cycle years, and any uploaded blobs (employee's and spouse's, under the
- * older embedded-spouse model). Blob deletion is best-effort — an orphaned
- * blob is low-stakes, a delete stuck behind a flaky storage call isn't, so
- * failures are logged, not thrown. Irreversible; the caller is responsible
- * for confirming with the user.
+ * cycle years, and any uploaded blobs. Blob deletion is best-effort — an
+ * orphaned blob is low-stakes, a delete stuck behind a flaky storage call
+ * isn't, so failures are logged, not thrown. Irreversible; the caller is
+ * responsible for confirming with the user.
  *
  * If this employee has a linked spouse roster row (recordType "spouse"),
  * that gets fully purged too — deleting the "family unit" together rather

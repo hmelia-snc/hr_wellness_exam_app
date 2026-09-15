@@ -17,7 +17,6 @@ type RosterRow = {
   email: string | null;
   employeeIdExternal: string | null;
   active: boolean;
-  needsSpouseForm: boolean;
   recordType: string;
   linkedEmployee: { fullName: string } | null;
   spouseRecords: { id: string; fullName: string }[];
@@ -30,7 +29,6 @@ function toEmployeeRows(employees: RosterRow[]): EmployeeRow[] {
     email: e.email,
     employeeIdExternal: e.employeeIdExternal,
     active: e.active,
-    needsSpouseForm: e.needsSpouseForm,
     recordType: e.recordType === "spouse" ? "spouse" : "employee",
     linkedEmployeeName: e.linkedEmployee?.fullName ?? null,
     spouseName: e.spouseRecords[0]?.fullName ?? null,
@@ -174,20 +172,6 @@ export function createEmployeesRouter(prisma: PrismaClient, emailSender: EmailSe
   router.post("/:id/reactivate", requireHrAuth, async (req: Request, res: Response, next: NextFunction) => {
     try {
       await prisma.employee.update({ where: { id: req.params.id }, data: { active: true } });
-      res.redirect(303, "/dashboard/employees");
-    } catch (err) {
-      next(err);
-    }
-  });
-
-  router.post("/:id/toggle-spouse-form", requireHrAuth, async (req: Request, res: Response, next: NextFunction) => {
-    try {
-      const employee = await prisma.employee.findUnique({ where: { id: req.params.id } });
-      if (!employee) {
-        res.status(404).send("Employee not found.");
-        return;
-      }
-      await prisma.employee.update({ where: { id: req.params.id }, data: { needsSpouseForm: !employee.needsSpouseForm } });
       res.redirect(303, "/dashboard/employees");
     } catch (err) {
       next(err);

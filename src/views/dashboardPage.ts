@@ -8,9 +8,9 @@ export interface DashboardRecordRow {
   // Null for a spouse roster record (no email/link of its own).
   employeeEmail: string | null;
   employeeActive: boolean;
-  // "employee" (default, includes any legacy needsSpouseForm employee) or
-  // "spouse" — a spouse roster record with its own PhysicalRecord, shown as
-  // its own row using the same status/progress/actions as anyone else.
+  // "employee" (default) or "spouse" — a spouse roster record with its own
+  // PhysicalRecord, shown as its own row using the same
+  // status/progress/actions as anyone else.
   recordType: "employee" | "spouse";
   // Set only when recordType is "spouse": the primary employee's name, for
   // the "Spouse of X" annotation under the row's name.
@@ -18,28 +18,20 @@ export interface DashboardRecordRow {
   status: string;
   // Usually the same as `status`, except overridden to "waiting_on_spouse"
   // when this is an employee's own record, it's literally "completed", but
-  // the linked spouse's side (new model's own record, or the old model's
-  // embedded spouseStatus) isn't done yet. Button eligibility below still
-  // keys off the real `status`, not this — this only changes what's shown.
+  // the linked spouse's own record isn't done yet. Button eligibility below
+  // still keys off the real `status`, not this — this only changes what's
+  // shown.
   displayStatus: string;
   sentAt: Date | null;
   receivedAt: Date | null;
   completedAt: Date | null;
-  needsSpouseForm: boolean;
-  spouseReceivedAt: Date | null;
   verificationResult: string | null;
   rejectionReason: string | null;
-  spouseStatus: string | null;
-  spouseVerificationResult: string | null;
-  spouseRejectionReason: string | null;
   hasUploadedFile: boolean;
-  hasSpouseFile: boolean;
 }
 
-function progressLabel(r: Pick<DashboardRecordRow, "receivedAt" | "needsSpouseForm" | "spouseReceivedAt">): string {
-  const total = r.needsSpouseForm ? 2 : 1;
-  const done = (r.receivedAt ? 1 : 0) + (r.needsSpouseForm && r.spouseReceivedAt ? 1 : 0);
-  return `${done} of ${total}`;
+function progressLabel(r: Pick<DashboardRecordRow, "receivedAt">): string {
+  return `${r.receivedAt ? 1 : 0} of 1`;
 }
 
 export interface DashboardPageProps {
@@ -82,10 +74,10 @@ const EXTRA_STYLES = `
   table { width: 100%; border-collapse: collapse; margin-top: 1rem; }
   /* vertical-align: top (rather than the table default of middle) keeps every
      cell in a row flush with the same top edge — without it, a row with
-     extra stacked content (a rejection reason, the spouse-status sub-line, a
-     wrapped button cluster) is taller than its neighbors, and the default
-     middle alignment makes that row's badges/buttons drift toward its own
-     vertical center instead of lining up with the shorter rows around it. */
+     extra stacked content (a rejection reason, a wrapped button cluster) is
+     taller than its neighbors, and the default middle alignment makes that
+     row's badges/buttons drift toward its own vertical center instead of
+     lining up with the shorter rows around it. */
   th, td { text-align: left; padding: 0.5rem 0.75rem; border-bottom: 1px solid #ddd; vertical-align: top; }
   th { font-weight: 700; color: ${BRAND.darkRed}; }
   .status-badge { display: inline-block; padding: 0.15rem 0.6rem; border-radius: 999px; font-size: 0.8rem; font-weight: 500; }
@@ -94,12 +86,9 @@ const EXTRA_STYLES = `
   .status-needs_review { background: ${BRAND.redTint10}; color: ${BRAND.darkRed}; }
   .status-rejected { background: ${BRAND.red}; color: #fff; }
   .status-completed { background: #d9f2d9; color: #1e6b1e; }
-  .status-not_received { background: #eaeaea; color: #888; }
   .status-employee { background: #eaeaea; color: #444; }
   .status-spouse { background: ${BRAND.redTint10}; color: ${BRAND.darkRed}; }
   .status-waiting_on_spouse { background: #e0d6f5; color: #4b2e83; }
-  .spouse-status-row { margin-top: 0.3rem; font-size: 0.75rem; color: #666; }
-  .spouse-status-row .status-badge { font-size: 0.72rem; padding: 0.1rem 0.5rem; }
   .linked-note { font-size: 0.75rem; color: #666; margin-top: 0.15rem; }
   .filters { margin: 1rem 0; }
   .filters a { margin-right: 0.9rem; text-decoration: none; color: ${BRAND.red}; font-weight: 500; }
@@ -172,10 +161,8 @@ const EXTRA_STYLES = `
   @media (prefers-color-scheme: dark) {
     th, td { border-bottom-color: #3a3836; }
     .status-sent { background: #333230; color: #ccc; }
-    .status-not_received { background: #333230; color: #999; }
     .status-employee { background: #333230; color: #ccc; }
     .status-waiting_on_spouse { background: #3a2d57; color: #d7c6f7; }
-    .spouse-status-row { color: #999; }
     .linked-note { color: #999; }
     .session-line { color: #aaa; }
     .inactive-note { color: #999; }
@@ -216,17 +203,10 @@ export function renderDashboardPage(props: DashboardPageProps): string {
       <td>
         <span class="status-badge status-${escapeHtml(r.displayStatus)}"${r.verificationResult ? ` title="${escapeHtml(r.verificationResult)}"` : ""}>${escapeHtml(statusLabel(r.displayStatus))}</span>
         ${r.rejectionReason ? `<span class="rejection-reason" title="${escapeHtml(r.rejectionReason)}">${escapeHtml(r.rejectionReason)}</span>` : ""}
-        ${
-          r.needsSpouseForm
-            ? `<div class="spouse-status-row">Spouse: <span class="status-badge status-${escapeHtml(r.spouseStatus ?? "not_received")}"${r.spouseVerificationResult ? ` title="${escapeHtml(r.spouseVerificationResult)}"` : ""}>${escapeHtml((r.spouseStatus ?? "not_received").replace(/_/g, " "))}</span></div>
-        ${r.spouseRejectionReason ? `<span class="rejection-reason" title="${escapeHtml(r.spouseRejectionReason)}">${escapeHtml(r.spouseRejectionReason)}</span>` : ""}`
-            : ""
-        }
       </td>
       <td>
         ${progressLabel(r)}
         ${r.hasUploadedFile ? `<a class="file-link" href="/dashboard/records/${encodeURIComponent(r.id)}/file" target="_blank" rel="noopener">View file</a>` : ""}
-        ${r.hasSpouseFile ? `<a class="file-link" href="/dashboard/records/${encodeURIComponent(r.id)}/spouse-file" target="_blank" rel="noopener">View spouse file</a>` : ""}
       </td>
       <td>${formatDate(r.sentAt)}</td>
       <td>${formatDate(r.receivedAt)}</td>
@@ -247,17 +227,7 @@ export function renderDashboardPage(props: DashboardPageProps): string {
         }
         ${
           r.employeeActive && r.status !== "rejected" && r.status !== "completed"
-            ? `<button type="button" class="small-button" onclick="openRejectModal(${escapeHtml(JSON.stringify([r.id]))}, ${escapeHtml(JSON.stringify(r.employeeName))}, 'employee')">Reject ${actionLabel}</button>`
-            : ""
-        }
-        ${
-          r.employeeActive && r.needsSpouseForm && r.spouseReceivedAt && r.spouseStatus !== "completed" && r.spouseStatus !== "rejected"
-            ? `<button type="submit" formaction="/dashboard/records/${encodeURIComponent(r.id)}/approve-spouse?${qs}" formmethod="post" class="small-button">Approve Spouse</button>`
-            : ""
-        }
-        ${
-          r.employeeActive && r.needsSpouseForm && r.spouseReceivedAt && r.spouseStatus !== "completed" && r.spouseStatus !== "rejected"
-            ? `<button type="button" class="small-button" onclick="openRejectModal(${escapeHtml(JSON.stringify([r.id]))}, ${escapeHtml(JSON.stringify(r.employeeName))}, 'spouse')">Reject Spouse</button>`
+            ? `<button type="button" class="small-button" onclick="openRejectModal(${escapeHtml(JSON.stringify([r.id]))}, ${escapeHtml(JSON.stringify(r.employeeName))})">Reject ${actionLabel}</button>`
             : ""
         }
       </td>
@@ -378,11 +348,10 @@ ${notices.join("\n")}
     }
     return confirm(action.charAt(0).toUpperCase() + action.slice(1) + ' ' + ids.length + ' record(s)?');
   }
-  function openRejectModal(ids, targetName, side) {
-    var isSpouse = side === 'spouse';
+  function openRejectModal(ids, targetName) {
     var form = document.getElementById('reject-form');
     form.action = ids.length === 1
-      ? '/dashboard/records/' + encodeURIComponent(ids[0]) + (isSpouse ? '/reject-spouse' : '/reject') + '?${qs}'
+      ? '/dashboard/records/' + encodeURIComponent(ids[0]) + '/reject?${qs}'
       : '/dashboard/bulk/reject?${qs}';
     var container = document.getElementById('reject-ids-container');
     container.innerHTML = '';
@@ -396,7 +365,7 @@ ${notices.join("\n")}
       });
     }
     var nameLabel = targetName || (ids.length + ' record(s)');
-    document.getElementById('reject-target-name').textContent = nameLabel + (isSpouse ? "'s spouse form" : '');
+    document.getElementById('reject-target-name').textContent = nameLabel;
     document.getElementById('reject-count').textContent = ids.length > 1 ? ('This reason will be emailed to all ' + ids.length + ' employees.') : '';
     document.getElementById('reject-reason').value = '';
     document.getElementById('reject-dialog').showModal();
@@ -407,7 +376,7 @@ ${notices.join("\n")}
       alert('Select at least one record first.');
       return;
     }
-    openRejectModal(ids, null, 'employee');
+    openRejectModal(ids, null);
   }
 </script>
 `;

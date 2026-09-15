@@ -268,26 +268,6 @@ describe("POST /dashboard/employees/:id/deactivate and /reactivate", () => {
   });
 });
 
-describe("POST /dashboard/employees/:id/toggle-spouse-form", () => {
-  it("toggles Employee.needsSpouseForm", async () => {
-    const prisma = createFakePrisma();
-    const employee = await prisma.employee.upsert({
-      where: { email: "spouse@example.com" },
-      create: { email: "spouse@example.com", fullName: "Spouse Person", active: true, needsSpouseForm: false },
-      update: {},
-    });
-    const app = createApp(prisma as any, createFakeBlobStorage(), createFakeEmailSender());
-    const agent = await signedInAgent(app);
-
-    const res = await agent.post(`/dashboard/employees/${employee.id}/toggle-spouse-form`);
-    expect(res.status).toBe(303);
-    expect((await prisma.employee.findUnique({ where: { id: employee.id } }))!.needsSpouseForm).toBe(true);
-
-    await agent.post(`/dashboard/employees/${employee.id}/toggle-spouse-form`);
-    expect((await prisma.employee.findUnique({ where: { id: employee.id } }))!.needsSpouseForm).toBe(false);
-  });
-});
-
 describe("POST /dashboard/employees/:id/delete", () => {
   it("removes the employee and all their physical records, and best-effort deletes blobs", async () => {
     const prisma = createFakePrisma();
@@ -304,7 +284,6 @@ describe("POST /dashboard/employees/:id/delete", () => {
       tokenExpiresAt: new Date(),
       status: "completed",
       uploadedBlobPath: "blob/path-1.pdf",
-      spouseUploadedBlobPath: "blob/spouse-1.pdf",
       createdAt: new Date(),
     });
     prisma._state.physicalRecords.push({
@@ -326,7 +305,7 @@ describe("POST /dashboard/employees/:id/delete", () => {
 
     expect(await prisma.employee.findUnique({ where: { id: employee.id } })).toBeNull();
     expect(prisma._state.physicalRecords.filter((r: any) => r.employeeId === employee.id)).toHaveLength(0);
-    expect(blobStorage.deleted).toEqual(expect.arrayContaining(["blob/path-1.pdf", "blob/spouse-1.pdf"]));
+    expect(blobStorage.deleted).toEqual(expect.arrayContaining(["blob/path-1.pdf"]));
 
     const page = await agent.get("/dashboard/employees?deleted=1");
     expect(page.text).toContain("Employee deleted.");

@@ -89,14 +89,12 @@ export function createPhysicalRouter(
       const status = record.status as PhysicalPageStatus;
       const uploadedFile = record.uploadedContentType ? { contentType: record.uploadedContentType } : null;
 
-      // New model: a linked spouse roster row tracks its own PhysicalRecord
-      // rather than the embedded spouse* fields on this record — show the
-      // spouse field for either case, and resolve "received" from whichever
-      // one applies.
+      // A linked spouse roster row tracks its own PhysicalRecord for the
+      // same cycle — that's what the spouse file field on this page feeds.
       const linkedSpouse = await prisma.employee.findFirst({
         where: { recordType: "spouse", linkedEmployeeId: employee.id },
       });
-      let spouseReceived = Boolean(record.spouseReceivedAt);
+      let spouseReceived = false;
       if (linkedSpouse) {
         const spouseRecord = await prisma.physicalRecord.findUnique({
           where: { employeeId_cycleYear: { employeeId: linkedSpouse.id, cycleYear: record.cycleYear } },
@@ -106,7 +104,7 @@ export function createPhysicalRouter(
 
       res.send(
         renderPhysicalPage(req.params.token, status, uploadedFile, {
-          needsSpouseForm: employee.needsSpouseForm || Boolean(linkedSpouse),
+          hasLinkedSpouse: Boolean(linkedSpouse),
           spouseReceived,
         })
       );
@@ -161,17 +159,14 @@ export function createPhysicalRouter(
         const record = req.physicalRecord!;
         const employee = req.employee!;
 
-        // New model: a linked spouse roster row (recordType "spouse") tracks
-        // its own PhysicalRecord for this cycle instead of the embedded
-        // spouse* fields on this record — the old model, still used
-        // unchanged below for any employee with needsSpouseForm but no
-        // linked row.
+        // A linked spouse roster row (recordType "spouse") tracks its own
+        // PhysicalRecord for this cycle — that's what a spouse file in this
+        // request gets written to.
         const linkedSpouse = await prisma.employee.findFirst({
           where: { recordType: "spouse", linkedEmployeeId: employee.id },
         });
-        const usesLinkedSpouseRecord = Boolean(linkedSpouse);
 
-        if (spouseFile && !employee.needsSpouseForm && !usesLinkedSpouseRecord) {
+        if (spouseFile && !linkedSpouse) {
           res.status(400).send("This employee doesn't have a spouse form on file.");
           return;
         }
@@ -190,9 +185,7 @@ export function createPhysicalRouter(
         // *this* request counts as done even though the DB update for it
         // hasn't landed yet at this point in the handler.
         const employeeFormDone = Boolean(formFile) || Boolean(record.receivedAt);
-        const spouseFormDone = usesLinkedSpouseRecord
-          ? Boolean(spouseFile) || Boolean(spouseAlreadyReceivedAt)
-          : !employee.needsSpouseForm || Boolean(spouseFile) || Boolean(record.spouseReceivedAt);
+        const spouseFormDone = !linkedSpouse || Boolean(spouseFile) || Boolean(spouseAlreadyReceivedAt);
         const isComplete = employeeFormDone && spouseFormDone;
         const uploadPageLink = `${env.APP_BASE_URL}/wellness-exam/${encodeURIComponent(req.params.token)}`;
 
@@ -253,70 +246,49 @@ export function createPhysicalRouter(
           }
         }
 
-        if (spouseFile) {
+        if (spouseFile && spousePhysicalRecordId) {
           const extension = ALLOWED_MIME_TYPES[spouseFile.mimetype] ?? "";
           const blobPath = `uploads/${record.cycleYear}/${record.id}/spouse-${Date.now()}-${randomUUID()}${extension}`;
-          const spouseUploadedFileUrl = await blobStorage.uploadForm(spouseFile.buffer, blobPath, spouseFile.mimetype);
+          const spouseFileUrl = await blobStorage.uploadForm(spouseFile.buffer, blobPath, spouseFile.mimetype);
 
-          if (usesLinkedSpouseRecord && spousePhysicalRecordId) {
-            // New model: write to the linked spouse's own PhysicalRecord
-            // using the same regular fields any employee upload uses —
-            // this is what lets OCR verification and the normal
-            // approve/reject actions apply to a spouse's upload too.
-            await prisma.physicalRecord.update({
-              where: { id: spousePhysicalRecordId },
-              data: {
-                uploadedFileUrl: spouseUploadedFileUrl,
-                uploadedBlobPath: blobPath,
-                uploadedContentType: spouseFile.mimetype,
-                status: "received",
-                receivedAt: new Date(),
-                rejectionReason: null,
-              },
+          // Written to the linked spouse's own PhysicalRecord using the same
+          // regular fields any employee upload uses — this is what lets OCR
+          // verification and the normal approve/reject actions apply to a
+          // spouse's upload too.
+          await prisma.physicalRecord.update({
+            where: { id: spousePhysicalRecordId },
+            data: {
+              uploadedFileUrl: spouseFileUrl,
+              uploadedBlobPath: blobPath,
+              uploadedContentType: spouseFile.mimetype,
+              status: "received",
+              receivedAt: new Date(),
+              rejectionReason: null,
+            },
+          });
+
+          console.log(`[upload] physicalRecord=${spousePhysicalRecordId} (linked spouse) received, blob=${blobPath}`);
+
+          if (formVerifier) {
+            verifyPhysicalRecord(
+              prisma,
+              formVerifier,
+              spousePhysicalRecordId,
+              blobPath,
+              spouseFile.buffer,
+              spouseFile.mimetype,
+              record.cycleYear
+            ).catch((err) => {
+              console.error(
+                `[upload] spouse verification kickoff failed for record=${spousePhysicalRecordId}:`,
+                err instanceof Error ? err.message : err
+              );
             });
-
-            console.log(`[upload] physicalRecord=${spousePhysicalRecordId} (linked spouse) received, blob=${blobPath}`);
-
-            if (formVerifier) {
-              verifyPhysicalRecord(
-                prisma,
-                formVerifier,
-                spousePhysicalRecordId,
-                blobPath,
-                spouseFile.buffer,
-                spouseFile.mimetype,
-                record.cycleYear
-              ).catch((err) => {
-                console.error(
-                  `[upload] spouse verification kickoff failed for record=${spousePhysicalRecordId}:`,
-                  err instanceof Error ? err.message : err
-                );
-              });
-            }
-          } else {
-            // Old embedded model: no linked spouse row, just the
-            // needsSpouseForm boolean — write the spouse's upload directly
-            // onto this record's spouse* fields, unchanged.
-            await prisma.physicalRecord.update({
-              where: { id: record.id },
-              data: {
-                spouseUploadedFileUrl,
-                spouseUploadedBlobPath: blobPath,
-                spouseUploadedContentType: spouseFile.mimetype,
-                spouseReceivedAt: new Date(),
-                spouseStatus: "received",
-                // A resubmission after a rejection clears the old reason —
-                // it's no longer accurate once a new file is in for review.
-                spouseRejectionReason: null,
-              },
-            });
-
-            console.log(`[upload] physicalRecord=${record.id} spouse form received, blob=${blobPath}`);
           }
 
-          // The spouse has no email of their own either way — this
-          // confirmation always goes to the employee, letting them know
-          // their spouse's form came in.
+          // The spouse has no email of their own — this confirmation always
+          // goes to the employee, letting them know their spouse's form
+          // came in.
           if (employee.email) {
             emailSender
               .sendUploadConfirmation({

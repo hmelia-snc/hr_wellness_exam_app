@@ -46,24 +46,14 @@ describe("parseEmployeeCsv", () => {
     expect(errors[0].message).toMatch(/Duplicate email/);
   });
 
-  it("leaves needsSpouseForm undefined when the column is absent", () => {
-    const csv = "full_name,email\nJane Doe,jane@example.com\n";
-    const { rows } = parseEmployeeCsv(csv);
-    expect(rows[0].needsSpouseForm).toBeUndefined();
-  });
-
-  it("parses needs_spouse_form as true for truthy values", () => {
-    const csv = "full_name,email,needs_spouse_form\nJane Doe,jane@example.com,yes\nJohn Smith,john@example.com,TRUE\n";
-    const { rows } = parseEmployeeCsv(csv);
-    expect(rows[0].needsSpouseForm).toBe(true);
-    expect(rows[1].needsSpouseForm).toBe(true);
-  });
-
-  it("parses needs_spouse_form as false for empty or falsy values", () => {
-    const csv = "full_name,email,needs_spouse_form\nJane Doe,jane@example.com,\nJohn Smith,john@example.com,no\n";
-    const { rows } = parseEmployeeCsv(csv);
-    expect(rows[0].needsSpouseForm).toBe(false);
-    expect(rows[1].needsSpouseForm).toBe(false);
+  it("silently ignores a leftover needs_spouse_form column from an older CSV format", () => {
+    // The legacy embedded-spouse model (and its needs_spouse_form import
+    // column) has been removed — an old CSV that still has this column
+    // shouldn't error, it should just be a no-op extra column.
+    const csv = "full_name,email,needs_spouse_form\nJane Doe,jane@example.com,yes\n";
+    const { rows, errors } = parseEmployeeCsv(csv);
+    expect(errors).toHaveLength(0);
+    expect(rows).toEqual([{ recordType: "employee", fullName: "Jane Doe", email: "jane@example.com", employeeIdExternal: undefined }]);
   });
 
   it("defaults record_type to employee when the column is absent", () => {

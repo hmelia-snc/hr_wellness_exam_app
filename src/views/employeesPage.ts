@@ -11,10 +11,6 @@ export interface EmployeeRow {
   email: string | null;
   employeeIdExternal: string | null;
   active: boolean;
-  // Deprecated (see Employee.needsSpouseForm in the schema) — still shown
-  // for any employee row that still relies on it, alongside the newer
-  // recordType/linkedEmployeeName-based spouse tracking below.
-  needsSpouseForm: boolean;
   recordType: "employee" | "spouse";
   // Set only for a recordType "spouse" row: the primary employee's name.
   linkedEmployeeName: string | null;
@@ -47,19 +43,6 @@ const EXTRA_STYLES = `
   .status-employee { background: #eaeaea; color: #444; }
   .status-spouse { background: ${BRAND.redTint10}; color: ${BRAND.darkRed}; }
   .linked-note { font-size: 0.75rem; color: #666; margin-top: 0.15rem; }
-  .spouse-toggle {
-    display: inline-block;
-    padding: 0.15rem 0.6rem;
-    border-radius: 999px;
-    font-size: 0.8rem;
-    font-weight: 500;
-    font-family: 'Ubuntu', Arial, sans-serif;
-    border: none;
-    cursor: pointer;
-  }
-  .spouse-toggle-yes { background: #d9f2d9; color: #1e6b1e; }
-  .spouse-toggle-no { background: #eaeaea; color: #555; }
-  .spouse-toggle:hover { opacity: 0.8; }
   .nav-line { margin: 0.5rem 0 1rem; }
   .nav-line a { color: ${BRAND.red}; font-weight: 500; text-decoration: none; }
   .session-line { color: #666; font-size: 0.9rem; }
@@ -196,21 +179,13 @@ export function renderEmployeesPage(props: EmployeesPageProps): string {
     .map((e) => {
       const toggleAction = e.active ? "deactivate" : "reactivate";
       const toggleLabel = e.active ? "Deactivate" : "Reactivate";
-      const spouseToggleTitle = e.needsSpouseForm ? "Click to remove the spouse form requirement" : "Click to add a spouse form requirement";
       const confirmMessage = `Permanently delete ${e.fullName}? This cannot be undone.`;
       const confirmAttr = escapeHtml(JSON.stringify(confirmMessage));
       const nameCell =
         e.recordType === "spouse"
           ? `${escapeHtml(e.fullName)}<div class="linked-note">↳ Spouse of ${escapeHtml(e.linkedEmployeeName ?? "—")}</div>`
           : escapeHtml(e.fullName);
-      // The legacy Yes/No toggle only applies to an employee row (nothing
-      // for a spouse row to toggle); a linked spouse row created the newer
-      // way shows its name here instead.
-      const spouseFormCell =
-        e.recordType === "spouse"
-          ? "—"
-          : `<button type="submit" formaction="/dashboard/employees/${encodeURIComponent(e.id)}/toggle-spouse-form" formmethod="post" class="spouse-toggle spouse-toggle-${e.needsSpouseForm ? "yes" : "no"}" title="${escapeHtml(spouseToggleTitle)}">${e.needsSpouseForm ? "Yes" : "No"}</button>
-        ${e.spouseName ? `<div class="linked-note">Linked spouse: ${escapeHtml(e.spouseName)}</div>` : ""}`;
+      const linkedSpouseCell = e.spouseName ? escapeHtml(e.spouseName) : "—";
       return `
     <tr>
       <td><input type="checkbox" name="ids" value="${escapeHtml(e.id)}" aria-label="Select ${escapeHtml(e.fullName)}" /></td>
@@ -219,7 +194,7 @@ export function renderEmployeesPage(props: EmployeesPageProps): string {
       <td>${e.employeeIdExternal ? escapeHtml(e.employeeIdExternal) : "—"}</td>
       <td><span class="status-badge status-${e.recordType}">${e.recordType === "spouse" ? "Spouse" : "Employee"}</span></td>
       <td><span class="status-badge status-${e.active ? "active" : "inactive"}">${e.active ? "active" : "inactive"}</span></td>
-      <td>${spouseFormCell}</td>
+      <td>${linkedSpouseCell}</td>
       <td class="actions-cell">
         <button type="submit" formaction="/dashboard/employees/${encodeURIComponent(e.id)}/${toggleAction}" formmethod="post" class="small-button">${toggleLabel}</button>
         <button type="submit" formaction="/dashboard/employees/${encodeURIComponent(e.id)}/delete" formmethod="post" class="delete-button" onclick="return confirm(${confirmAttr})">Delete</button>
@@ -291,7 +266,7 @@ ${bulkDeletedNotice}
     <thead>
       <tr>
         <th><input type="checkbox" id="select-all" onclick="toggleAllRows(this)" aria-label="Select all" /></th>
-        <th>Name</th><th>Email</th><th>External ID</th><th>Type</th><th>Status</th><th>Spouse Form</th><th></th>
+        <th>Name</th><th>Email</th><th>External ID</th><th>Type</th><th>Status</th><th>Linked Spouse</th><th></th>
       </tr>
     </thead>
     <tbody>${rows || `<tr><td colspan="8">No records yet.</td></tr>`}</tbody>

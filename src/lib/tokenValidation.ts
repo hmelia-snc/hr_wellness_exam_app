@@ -12,8 +12,8 @@ export type TokenValidationResult =
  * `not_found` covers both a garbage token and a real-but-unknown one — the
  * caller shouldn't distinguish these in its response, to avoid leaking
  * whether a near-miss token exists. The `ok`/`completed` kinds also load the
- * related employee, since the upload page needs `needsSpouseForm` to decide
- * whether to show the spouse's file slot.
+ * related employee, since the upload page needs it to check for a linked
+ * spouse and decide whether to show the spouse's file slot.
  */
 export async function validateToken(prisma: PrismaClient, rawToken: string): Promise<TokenValidationResult> {
   const tokenHash = hashToken(rawToken);
