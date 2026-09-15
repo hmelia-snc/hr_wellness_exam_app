@@ -278,6 +278,14 @@ export interface ResendLinkResult {
  * Available regardless of current status: covers a lost/expired link, and
  * also doubles as "force a re-upload" for a needs_review case.
  *
+ * A spouse's own record has no independent link/email of its own — the
+ * spouse always submits through the linked primary employee's own upload
+ * link — so for a spouse-owned physicalRecordId this resolves (and resets)
+ * the primary's record for the same cycle instead, same as
+ * getShareableLink. That does mean resending from either the employee's or
+ * the spouse's row resets the one shared link/status they both depend on —
+ * an accepted consequence of there being only one real link, not a bug.
+ *
  * Checks for an email up front, before touching anything — a spouse's own
  * record commonly has none, and resetting (wiping received/completed
  * status back to "sent") is destructive, so a record with no one to notify
@@ -296,6 +304,16 @@ export async function resendLink(
   if (!employee) {
     throw new Error(`No employee found with id ${record.employeeId}`);
   }
+
+  if (employee.recordType === "spouse" && employee.linkedEmployeeId) {
+    const primaryRecord = await prisma.physicalRecord.findUnique({
+      where: { employeeId_cycleYear: { employeeId: employee.linkedEmployeeId, cycleYear: record.cycleYear } },
+    });
+    if (primaryRecord) {
+      return resendLink(prisma, emailSender, primaryRecord.id);
+    }
+  }
+
   if (!employee.email) {
     return { emailSent: false, emailError: "No email on file for this record." };
   }

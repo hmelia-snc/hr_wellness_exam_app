@@ -226,6 +226,40 @@ describe("POST /dashboard/records/:id/resend", () => {
     expect(updated.status).toBe("sent");
     expect(emailSender.sent).toHaveLength(0);
   });
+
+  it("resolves a spouse's own record to the linked primary's — resets and emails the primary, not the spouse", async () => {
+    const prisma = createFakePrisma();
+    const emailSender = createFakeEmailSender();
+    const { record: primaryRecord, employee: primary } = await seedEmployeeAndRecord(prisma, { tokenHash: "primary-original-hash" });
+    const spouse = await prisma.employee.create({
+      data: { fullName: "John Doe", recordType: "spouse", linkedEmployeeId: primary.id, active: true },
+    });
+    prisma._state.physicalRecords.push({
+      id: "spouse-rec-resend",
+      employeeId: spouse.id,
+      cycleYear: 2026,
+      tokenHash: "spouse-original-hash",
+      tokenExpiresAt: new Date(Date.now() + 1000 * 60 * 60 * 24 * 30),
+      status: "sent",
+      createdAt: new Date(),
+    });
+    const app = createApp(prisma as any, createFakeBlobStorage(), emailSender);
+    const agent = request.agent(app);
+    await agent.post("/auth/login").type("form").send({ returnTo: "/dashboard" });
+
+    const res = await agent.post("/dashboard/records/spouse-rec-resend/resend?year=2026");
+    expect(res.status).toBe(303);
+
+    expect(emailSender.sent).toHaveLength(1);
+    expect(emailSender.sent[0].toEmail).toBe("jane.doe@example.com");
+
+    const updatedPrimary = prisma._state.physicalRecords.find((r: any) => r.id === primaryRecord.id);
+    expect(updatedPrimary.tokenHash).not.toBe("primary-original-hash");
+    expect(updatedPrimary.status).toBe("sent");
+
+    const untouchedSpouse = prisma._state.physicalRecords.find((r: any) => r.id === "spouse-rec-resend");
+    expect(untouchedSpouse.tokenHash).toBe("spouse-original-hash");
+  });
 });
 
 describe("POST /dashboard/records/:id/link", () => {
@@ -333,6 +367,38 @@ describe("POST /dashboard/records/:id/link", () => {
     const res = await request(app).post(`/dashboard/records/${record.id}/link`);
     expect(res.status).toBe(302);
     expect(res.headers.location).toMatch(/^\/auth\/login/);
+  });
+
+  it("shows the linked primary's link (not the spouse's own) when requested from a spouse's row", async () => {
+    const prisma = createFakePrisma();
+    const { employee: primary } = await seedEmployeeAndRecord(prisma, {
+      rawToken: "primary-raw-token",
+      tokenHash: "primary-token-hash",
+    });
+    const spouse = await prisma.employee.create({
+      data: { fullName: "John Doe", recordType: "spouse", linkedEmployeeId: primary.id, active: true },
+    });
+    prisma._state.physicalRecords.push({
+      id: "spouse-rec-link",
+      employeeId: spouse.id,
+      cycleYear: 2026,
+      tokenHash: "spouse-token-hash",
+      rawToken: "spouse-raw-token",
+      tokenExpiresAt: new Date(Date.now() + 1000 * 60 * 60 * 24 * 30),
+      status: "sent",
+      createdAt: new Date(),
+    });
+    const app = createApp(prisma as any, createFakeBlobStorage(), createFakeEmailSender());
+    const agent = request.agent(app);
+    await agent.post("/auth/login").type("form").send({ returnTo: "/dashboard" });
+
+    const res = await agent.post("/dashboard/records/spouse-rec-link/link?year=2026");
+    expect(res.status).toBe(200);
+    // Jane's link, shown as hers, is what actually gets shared — the
+    // spouse's own token is never exposed.
+    expect(res.text).toContain("Jane Doe");
+    expect(res.text).toContain("/wellness-exam/primary-raw-token");
+    expect(res.text).not.toContain("/wellness-exam/spouse-raw-token");
   });
 });
 
@@ -624,19 +690,8 @@ describe("Dashboard bulk actions", () => {
   });
 });
 
-describe("GET /dashboard progress column", () => {
-  it("shows 0 of 1 for a record that hasn't been received yet", async () => {
-    const prisma = createFakePrisma();
-    await seedEmployeeAndRecord(prisma);
-    const app = createApp(prisma as any, createFakeBlobStorage(), createFakeEmailSender());
-    const agent = request.agent(app);
-    await agent.post("/auth/login").type("form").send({ returnTo: "/dashboard" });
-
-    const res = await agent.get("/dashboard?year=2026");
-    expect(res.text).toContain("0 of 1");
-  });
-
-  it("shows 1 of 1 once received — every record (including a spouse's own) tracks progress independently", async () => {
+describe("GET /dashboard: no Progress column", () => {
+  it("does not render a Progress column header", async () => {
     const prisma = createFakePrisma();
     await seedEmployeeAndRecord(prisma, { receivedAt: new Date() });
     const app = createApp(prisma as any, createFakeBlobStorage(), createFakeEmailSender());
@@ -644,7 +699,7 @@ describe("GET /dashboard progress column", () => {
     await agent.post("/auth/login").type("form").send({ returnTo: "/dashboard" });
 
     const res = await agent.get("/dashboard?year=2026");
-    expect(res.text).toContain("1 of 1");
+    expect(res.text).not.toContain("<th>Progress</th>");
   });
 });
 
@@ -671,9 +726,11 @@ describe("Dashboard: linked spouse roster records show as their own row", () => 
     const res = await agent.get("/dashboard?year=2026");
     expect(res.text).toContain("John Doe");
     expect(res.text).toContain("Spouse of Jane Doe");
-    // The spouse row's own actions use the regular /approve /reject routes,
-    // just labeled for the spouse rather than "via" the old spouse* fields.
-    expect(res.text).toContain("Submitted via Jane Doe's link");
+    // The spouse row's own actions use the regular /approve/reject/resend/
+    // link routes on its own record id — getShareableLink and resendLink
+    // resolve those back to the linked primary's actual link internally.
+    expect(res.text).toContain("/dashboard/records/spouse-rec-1/resend?");
+    expect(res.text).toContain("/dashboard/records/spouse-rec-1/link?");
     // A dedicated Type column/badge, not just the "Spouse of X" annotation
     // under the name — distinguishes a spouse's own row from an employee's
     // at a glance.
@@ -742,6 +799,11 @@ describe("Dashboard: Waiting on Spouse status", () => {
     // defines .status-completed, so check the actual badge markup rather
     // than a bare substring.
     expect(res.text).not.toContain('class="status-badge status-completed"');
+    // A link to jump straight to the spouse's own row — its target is the
+    // spouse's PhysicalRecord id, and the row itself carries a matching
+    // id="row-..." anchor for the browser to scroll to.
+    expect(res.text).toContain('href="/dashboard?year=2026#row-spouse-rec-waiting"');
+    expect(res.text).toContain('id="row-spouse-rec-waiting"');
   });
 
   it("shows Completed (new model) once both the employee's and the linked spouse's records are completed", async () => {

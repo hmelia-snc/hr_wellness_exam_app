@@ -40,6 +40,7 @@ function queryNumber(value: unknown): number | undefined {
 // enough for computeDisplayStatuses below, regardless of what else each
 // caller's `include`/`select` pulls in.
 interface RecordForStatus {
+  id: string;
   employeeId: string;
   status: string;
   employee: {
@@ -57,19 +58,30 @@ interface RecordForStatus {
  * asked for this direction). This is purely a display-layer label: the
  * underlying `status` column, which button eligibility and other logic
  * still key off, is untouched.
+ *
+ * Also resolves linkedSpouseRecordId — the linked spouse's own
+ * PhysicalRecord id for this same cycle — so a "waiting_on_spouse" row can
+ * link straight to it, regardless of what displayStatus lands on.
  */
-function withDisplayStatuses<T extends RecordForStatus>(records: T[]): (T & { displayStatus: string })[] {
+function withDisplayStatuses<T extends RecordForStatus>(
+  records: T[]
+): (T & { displayStatus: string; linkedSpouseRecordId: string | null })[] {
   const statusByEmployeeId = new Map(records.map((r) => [r.employeeId, r.status]));
+  const recordIdByEmployeeId = new Map(records.map((r) => [r.employeeId, r.id]));
   return records.map((record) => {
     const { employee } = record;
     let displayStatus = record.status;
-    if (record.status === "completed" && employee.recordType !== "spouse") {
+    let linkedSpouseRecordId: string | null = null;
+    if (employee.recordType !== "spouse") {
       const linkedSpouseEmployeeId = employee.spouseRecords[0]?.id;
-      if (linkedSpouseEmployeeId && statusByEmployeeId.get(linkedSpouseEmployeeId) !== "completed") {
-        displayStatus = "waiting_on_spouse";
+      if (linkedSpouseEmployeeId) {
+        linkedSpouseRecordId = recordIdByEmployeeId.get(linkedSpouseEmployeeId) ?? null;
+        if (record.status === "completed" && statusByEmployeeId.get(linkedSpouseEmployeeId) !== "completed") {
+          displayStatus = "waiting_on_spouse";
+        }
       }
     }
-    return { ...record, displayStatus };
+    return { ...record, displayStatus, linkedSpouseRecordId };
   });
 }
 
@@ -143,6 +155,7 @@ export function createDashboardRouter(prisma: PrismaClient, emailSender: EmailSe
             linkedEmployeeName: record.employee.linkedEmployee?.fullName ?? null,
             status: record.status,
             displayStatus: record.displayStatus,
+            linkedSpouseRecordId: record.linkedSpouseRecordId,
             sentAt: record.sentAt,
             receivedAt: record.receivedAt,
             completedAt: record.completedAt,

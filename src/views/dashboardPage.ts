@@ -22,16 +22,16 @@ export interface DashboardRecordRow {
   // still keys off the real `status`, not this — this only changes what's
   // shown.
   displayStatus: string;
+  // Set only on an employee's own row that has a linked spouse: that
+  // spouse's own PhysicalRecord id, for linking straight to its row when
+  // displayStatus is "waiting_on_spouse".
+  linkedSpouseRecordId: string | null;
   sentAt: Date | null;
   receivedAt: Date | null;
   completedAt: Date | null;
   verificationResult: string | null;
   rejectionReason: string | null;
   hasUploadedFile: boolean;
-}
-
-function progressLabel(r: Pick<DashboardRecordRow, "receivedAt">): string {
-  return `${r.receivedAt ? 1 : 0} of 1`;
 }
 
 export interface DashboardPageProps {
@@ -118,14 +118,12 @@ const EXTRA_STYLES = `
     white-space: nowrap;
   }
   .small-button:hover { background: ${BRAND.red}; color: #fff; }
-  /* wrap (not nowrap): a row's actions cell can hold anywhere from one to
-     five buttons depending on status/model, so forcing them onto a single
-     line either overflows the table horizontally or squeezes every row to
-     the width of its busiest neighbor — which is what actually caused rows
-     to look like they didn't "line up": the actions column's effective
-     width varied row to row instead of every row wrapping within the same
-     column width like the rest of the grid. */
-  .actions-cell { display: flex; flex-wrap: wrap; align-items: center; gap: 0.4rem; }
+  /* nowrap: every row's action buttons belong on a single line — the
+     surrounding table is already wrapped in an overflow-x: auto container,
+     so a row that genuinely needs more room than the viewport scrolls
+     horizontally with the rest of the table rather than the actions column
+     wrapping onto a second line by itself. */
+  .actions-cell { display: flex; flex-wrap: nowrap; align-items: center; gap: 0.4rem; }
   .actions-cell form { display: inline; }
   .inactive-note { color: #888; font-size: 0.8rem; font-style: italic; white-space: nowrap; }
   .file-link { display: block; font-size: 0.75rem; color: ${BRAND.red}; text-decoration: none; margin-top: 0.15rem; }
@@ -192,7 +190,7 @@ export function renderDashboardPage(props: DashboardPageProps): string {
     .map((r) => {
       const actionLabel = r.recordType === "spouse" ? "Spouse" : "Employee";
       return `
-    <tr>
+    <tr id="row-${escapeHtml(r.id)}">
       <td><input type="checkbox" name="ids" value="${escapeHtml(r.id)}" aria-label="Select ${escapeHtml(r.employeeName)}"${r.employeeActive ? "" : ` disabled title="Employee inactive — excluded from bulk actions"`} /></td>
       <td>
         ${escapeHtml(r.employeeName)}
@@ -203,9 +201,11 @@ export function renderDashboardPage(props: DashboardPageProps): string {
       <td>
         <span class="status-badge status-${escapeHtml(r.displayStatus)}"${r.verificationResult ? ` title="${escapeHtml(r.verificationResult)}"` : ""}>${escapeHtml(statusLabel(r.displayStatus))}</span>
         ${r.rejectionReason ? `<span class="rejection-reason" title="${escapeHtml(r.rejectionReason)}">${escapeHtml(r.rejectionReason)}</span>` : ""}
-      </td>
-      <td>
-        ${progressLabel(r)}
+        ${
+          r.displayStatus === "waiting_on_spouse" && r.linkedSpouseRecordId
+            ? `<a class="file-link" href="/dashboard?year=${props.cycleYear}#row-${escapeHtml(r.linkedSpouseRecordId)}">View spouse record</a>`
+            : ""
+        }
         ${r.hasUploadedFile ? `<a class="file-link" href="/dashboard/records/${encodeURIComponent(r.id)}/file" target="_blank" rel="noopener">View file</a>` : ""}
       </td>
       <td>${formatDate(r.sentAt)}</td>
@@ -213,12 +213,10 @@ export function renderDashboardPage(props: DashboardPageProps): string {
       <td>${formatDate(r.completedAt)}</td>
       <td class="actions-cell">
         ${
-          r.recordType === "spouse"
-            ? `<span class="inactive-note">Submitted via ${escapeHtml(r.linkedEmployeeName ?? "linked employee")}'s link</span>`
-            : r.employeeActive
-              ? `<button type="submit" formaction="/dashboard/records/${encodeURIComponent(r.id)}/resend?${qs}" formmethod="post" class="small-button">Resend</button>
+          r.employeeActive
+            ? `<button type="submit" formaction="/dashboard/records/${encodeURIComponent(r.id)}/resend?${qs}" formmethod="post" class="small-button">Resend</button>
         <button type="submit" formaction="/dashboard/records/${encodeURIComponent(r.id)}/link?${qs}" formmethod="post" class="small-button">Get Link</button>`
-              : `<span class="inactive-note">Employee inactive</span>`
+            : `<span class="inactive-note">Employee inactive</span>`
         }
         ${
           r.employeeActive && r.status === "needs_review"
@@ -308,10 +306,10 @@ ${notices.join("\n")}
     <thead>
       <tr>
         <th><input type="checkbox" id="select-all" onclick="toggleAllRows(this)" aria-label="Select all" /></th>
-        <th>Employee</th><th>Email</th><th>Type</th><th>Status</th><th>Progress</th><th>Sent</th><th>Received</th><th>Completed</th><th></th>
+        <th>Employee</th><th>Email</th><th>Type</th><th>Status</th><th>Sent</th><th>Received</th><th>Completed</th><th></th>
       </tr>
     </thead>
-    <tbody>${rows || `<tr><td colspan="10">No records for this cycle${props.statusFilter ? ` with status "${escapeHtml(props.statusFilter)}"` : ""}.</td></tr>`}</tbody>
+    <tbody>${rows || `<tr><td colspan="9">No records for this cycle${props.statusFilter ? ` with status "${escapeHtml(props.statusFilter)}"` : ""}.</td></tr>`}</tbody>
   </table>
   </div>
 </form>
