@@ -62,35 +62,34 @@ describe("parseEmployeeCsv", () => {
     expect(rows[0].recordType).toBe("employee");
   });
 
-  it("parses a spouse row linked to an employee by email, without requiring its own email", () => {
+  it("parses a spouse row linked to an employee by employee_id_external, without requiring its own email", () => {
     const csv =
-      "record_type,full_name,email,linked_employee_email\nemployee,Jane Doe,jane@example.com,\nspouse,John Doe,,JANE@example.com\n";
+      "record_type,full_name,email,employee_id_external\nemployee,Jane Doe,jane@example.com,E100\nspouse,John Doe,,E100\n";
     const { rows, errors } = parseEmployeeCsv(csv);
     expect(errors).toHaveLength(0);
     expect(rows).toEqual([
-      { recordType: "employee", fullName: "Jane Doe", email: "jane@example.com", employeeIdExternal: undefined },
+      { recordType: "employee", fullName: "Jane Doe", email: "jane@example.com", employeeIdExternal: "E100" },
       {
         recordType: "spouse",
         fullName: "John Doe",
         email: undefined,
-        employeeIdExternal: undefined,
-        linkedEmployeeEmail: "jane@example.com",
+        employeeIdExternal: "E100",
       },
     ]);
   });
 
   it("accepts a spouse row with its own email too", () => {
-    const csv = "record_type,full_name,email,linked_employee_email\nspouse,John Doe,john@example.com,jane@example.com\n";
+    const csv = "record_type,full_name,email,employee_id_external\nspouse,John Doe,john@example.com,E100\n";
     const { rows, errors } = parseEmployeeCsv(csv);
     expect(errors).toHaveLength(0);
     expect(rows[0].email).toBe("john@example.com");
   });
 
-  it("collects an error for a spouse row missing linked_employee_email", () => {
+  it("collects an error for a spouse row missing employee_id_external", () => {
     const csv = "record_type,full_name\nspouse,John Doe\n";
     const { rows, errors } = parseEmployeeCsv(csv);
     expect(rows).toHaveLength(0);
-    expect(errors[0].message).toMatch(/Missing linked_employee_email/);
+    expect(errors[0].message).toMatch(/Missing employee_id_external/);
   });
 
   it("collects an error for an invalid record_type", () => {

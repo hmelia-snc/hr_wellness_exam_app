@@ -76,10 +76,10 @@ export function createEmployeesRouter(prisma: PrismaClient, emailSender: EmailSe
 
   router.get("/csv-template", requireHrAuth, (_req: Request, res: Response) => {
     const template =
-      "record_type,full_name,email,employee_id_external,linked_employee_email\n" +
-      "employee,Jane Doe,jane.doe@example.com,E12345,\n" +
-      "spouse,John Doe,,,jane.doe@example.com\n" +
-      "employee,John Smith,john.smith@example.com,E12346,\n";
+      "record_type,full_name,email,employee_id_external\n" +
+      "employee,Jane Doe,jane.doe@example.com,E12345\n" +
+      "spouse,John Doe,,E12345\n" +
+      "employee,John Smith,john.smith@example.com,E12346\n";
     res.type("text/csv").attachment("employee-roster-template.csv").send(template);
   });
 

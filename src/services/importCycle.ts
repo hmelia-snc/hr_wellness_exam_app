@@ -22,18 +22,20 @@ export interface ImportCycleResult {
 
 /**
  * Imports a CSV of employee and spouse rows for a physical-form cycle.
- * Two passes, since a spouse row's linked_employee_email may point at an
+ * Two passes, since a spouse row's employee_id_external may point at an
  * employee row earlier OR later in the same file:
  *   1. Every "employee" row goes through upsertEmployeeAndSendLink (upsert
  *      employee, create+email a fresh record unless one already exists for
  *      this cycleYear — re-running an import is a no-op for employees
  *      already in progress).
- *   2. Every "spouse" row is then resolved against linked_employee_email —
+ *   2. Every "spouse" row is then resolved against employee_id_external —
  *      against an employee just upserted in pass 1, or one already in the
  *      DB from an earlier import — via upsertSpouseRecord. A row whose
- *      linked_employee_email doesn't match any known employee is recorded
+ *      employee_id_external doesn't match any known employee is recorded
  *      in spouseLinkErrors rather than thrown, same "one bad row doesn't
- *      sink the batch" approach as the CSV parser itself.
+ *      sink the batch" approach as the CSV parser itself. employeeIdExternal
+ *      isn't a unique column, so a duplicate silently resolves to whichever
+ *      matching employee comes back first.
  */
 export async function importCycle(
   prisma: PrismaClient,
@@ -76,11 +78,13 @@ export async function importCycle(
   // report them by the spouse's own name instead — still enough for HR to
   // find and fix the offending row.
   for (const row of spouseRows) {
-    const linkedEmployee = await prisma.employee.findUnique({ where: { email: row.linkedEmployeeEmail } });
-    if (!linkedEmployee || linkedEmployee.recordType !== "employee") {
+    const linkedEmployee = await prisma.employee.findFirst({
+      where: { employeeIdExternal: row.employeeIdExternal, recordType: "employee" },
+    });
+    if (!linkedEmployee) {
       spouseLinkErrors.push({
         line: 0,
-        message: `${row.fullName}: no employee found with email "${row.linkedEmployeeEmail}"`,
+        message: `${row.fullName}: no employee found with employee_id_external "${row.employeeIdExternal}"`,
       });
       continue;
     }
@@ -88,7 +92,9 @@ export async function importCycle(
     await upsertSpouseRecord(prisma, {
       fullName: row.fullName,
       email: row.email,
-      employeeIdExternal: row.employeeIdExternal,
+      // Not row.employeeIdExternal — on a spouse row that value is the
+      // linked employee's own external ID (just used above to find them),
+      // not anything of the spouse's own.
       linkedEmployeeId: linkedEmployee.id,
       cycleYear: options.cycleYear,
     });

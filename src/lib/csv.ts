@@ -3,17 +3,20 @@ import { z } from "zod";
 
 export interface EmployeeCsvRow {
   // "employee" (default, when the column is absent) or "spouse". A spouse
-  // row is linked back to an employee row via linkedEmployeeEmail instead
+  // row is linked back to an employee row via employeeIdExternal instead
   // of getting its own upload link/email.
   recordType: "employee" | "spouse";
   fullName: string;
   // Required for an "employee" row; optional for a "spouse" row, which
   // commonly has none.
   email?: string;
+  // Dual meaning depending on recordType, matching the CSV's single
+  // employee_id_external column:
+  //   - "employee" row: this employee's own external ID (optional).
+  //   - "spouse" row: required — the external ID of the employee row this
+  //     spouse should be linked to. Never stored as the spouse's own
+  //     external ID (spouses don't have one in this model).
   employeeIdExternal?: string;
-  // Only set (and required) on a "spouse" row: the email of the employee
-  // row it should be linked to.
-  linkedEmployeeEmail?: string;
 }
 
 export interface CsvRowError {
@@ -33,7 +36,6 @@ const rawRowSchema = z.object({
   email: z.string().optional(),
   employee_id_external: z.string().optional(),
   employee_id: z.string().optional(),
-  linked_employee_email: z.string().optional(),
 });
 
 /**
@@ -75,21 +77,14 @@ export function parseEmployeeCsv(csvContent: string): CsvParseResult {
       return;
     }
 
-    const employeeIdExternal =
-      (parsed.data.employee_id_external || parsed.data.employee_id)?.trim() || undefined;
-
     // A spouse row's own email is optional (it never gets independent
     // link/email delivery), but it must instead name which employee it
-    // belongs to via linked_employee_email.
+    // belongs to — via employee_id_external, holding that employee's own
+    // external ID rather than anything of the spouse's own.
     if (recordType === "spouse") {
-      const rawLinkedEmail = parsed.data.linked_employee_email?.trim();
-      if (!rawLinkedEmail) {
-        errors.push({ line, message: "Missing linked_employee_email for a spouse row" });
-        return;
-      }
-      const linkedEmailResult = z.string().trim().toLowerCase().email().safeParse(rawLinkedEmail);
-      if (!linkedEmailResult.success) {
-        errors.push({ line, message: `Invalid linked_employee_email: "${rawLinkedEmail}"` });
+      const linkedExternalId = (parsed.data.employee_id_external || parsed.data.employee_id)?.trim();
+      if (!linkedExternalId) {
+        errors.push({ line, message: "Missing employee_id_external for a spouse row" });
         return;
       }
 
@@ -113,11 +108,12 @@ export function parseEmployeeCsv(csvContent: string): CsvParseResult {
         recordType: "spouse",
         fullName,
         email,
-        employeeIdExternal,
-        linkedEmployeeEmail: linkedEmailResult.data,
+        employeeIdExternal: linkedExternalId,
       });
       return;
     }
+
+    const employeeIdExternal = (parsed.data.employee_id_external || parsed.data.employee_id)?.trim() || undefined;
 
     const emailResult = z.string().trim().toLowerCase().email().safeParse(parsed.data.email);
     if (!emailResult.success) {

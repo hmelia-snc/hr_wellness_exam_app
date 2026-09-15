@@ -73,7 +73,7 @@ describe("GET /dashboard/employees/csv-template", () => {
     expect(res.status).toBe(200);
     expect(res.headers["content-disposition"]).toMatch(/attachment/);
     expect(res.headers["content-disposition"]).toMatch(/employee-roster-template\.csv/);
-    expect(res.text.split("\n")[0]).toBe("record_type,full_name,email,employee_id_external,linked_employee_email");
+    expect(res.text.split("\n")[0]).toBe("record_type,full_name,email,employee_id_external");
   });
 });
 
@@ -202,16 +202,16 @@ describe("POST /dashboard/employees/import (CSV)", () => {
     expect(prisma._state.physicalRecords).toHaveLength(2);
   });
 
-  it("links a spouse row to its employee via linked_employee_email", async () => {
+  it("links a spouse row to its employee via employee_id_external", async () => {
     const prisma = createFakePrisma();
     const emailSender = createFakeEmailSender();
     const app = createApp(prisma as any, createFakeBlobStorage(), emailSender);
     const agent = await signedInAgent(app);
 
     const csv =
-      "record_type,full_name,email,linked_employee_email\n" +
-      "employee,Jane Doe,jane.doe@example.com,\n" +
-      "spouse,John Doe,,jane.doe@example.com\n";
+      "record_type,full_name,email,employee_id_external\n" +
+      "employee,Jane Doe,jane.doe@example.com,E100\n" +
+      "spouse,John Doe,,E100\n";
     const res = await agent
       .post("/dashboard/employees/import")
       .field("cycleYear", "2026")
@@ -230,12 +230,12 @@ describe("POST /dashboard/employees/import (CSV)", () => {
     expect(emailSender.sent[0].toEmail).toBe("jane.doe@example.com");
   });
 
-  it("reports a spouse row whose linked_employee_email doesn't match any employee", async () => {
+  it("reports a spouse row whose employee_id_external doesn't match any employee", async () => {
     const prisma = createFakePrisma();
     const app = createApp(prisma as any, createFakeBlobStorage(), createFakeEmailSender());
     const agent = await signedInAgent(app);
 
-    const csv = "record_type,full_name,linked_employee_email\nspouse,John Doe,nobody@example.com\n";
+    const csv = "record_type,full_name,employee_id_external\nspouse,John Doe,E999\n";
     const res = await agent
       .post("/dashboard/employees/import")
       .field("cycleYear", "2026")
@@ -243,7 +243,7 @@ describe("POST /dashboard/employees/import (CSV)", () => {
 
     expect(res.status).toBe(200);
     expect(res.text).toMatch(/Spouse rows not linked/);
-    expect(res.text).toMatch(/no employee found with email/);
+    expect(res.text).toMatch(/no employee found with employee_id_external/);
   });
 });
 
